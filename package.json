@@ -1,0 +1,9 @@
+{
+  "name": "kormem-monorepo",
+  "private": true,
+  "workspaces": ["packages/cli"],
+  "scripts": {
+    "build": "npm run build -w @kormem/kormem",
+    "test": "npm run test -w @kormem/kormem"
+  }
+}
