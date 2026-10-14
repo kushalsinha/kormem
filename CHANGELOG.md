@@ -7,6 +7,7 @@ All notable changes to kormem are recorded here. The format follows [Keep a Chan
 ### Added
 
 - Community and governance files: CONTRIBUTING, Code of Conduct, Security policy, issue and pull request templates, CODEOWNERS and Dependabot configuration.
+- Benchmark: session-level retrieval recall (R@5) with MemPalace for comparison, `benchmark/retrieval_recall.py` to reproduce it, and source links for every compared system.
 
 ### Changed
 

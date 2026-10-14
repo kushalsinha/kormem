@@ -9,6 +9,7 @@ The harness uses the product path end to end: each question's haystack sessions 
 | `ingest.py` | Build each question's namespace (`lme_<qid>`): sessions → chat sessions → extraction (vault linker + persona). |
 | `run_subset.py` | Recall, answer and judge each question in-process. |
 | `official_judge.py` | Re-score a results file with the official LongMemEval protocol: `gpt-4o-2024-08-06` and the verbatim `evaluate_qa.py` prompts. |
+| `retrieval_recall.py` | Session-level R@k (`recall_any` and `recall_all`) from a folder of cached contexts. |
 | `judge.py`, `config.py`, `common.py` | Kormem's own judge, model settings, shared helpers. |
 
 ```bash
@@ -17,6 +18,7 @@ python -m benchmark.ingest --subset questions.json --concurrency 12
 KORMEM_CONTEXT_CACHE=contexts python -m benchmark.run_subset --subset questions.json \
   --concurrency 8 --results-jsonl out.jsonl --resume --output out.json
 python -m benchmark.official_judge out.json
+python -m benchmark.retrieval_recall contexts
 ```
 
 Environment variables:

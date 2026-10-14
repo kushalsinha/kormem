@@ -1,6 +1,6 @@
 # LongMemEval results
 
-Kormem scores **94.4% (472/500) on LongMemEval-S**. That uses Claude Sonnet 5.5 as the answer model and the official GPT-4o judge. Each question gets a single-shot answer from a curated context of about 19k tokens, roughly 1/6 of the conversation history.
+Kormem scores **94.4% (472/500) on [LongMemEval-S](https://github.com/xiaowu0162/LongMemEval)** [7]. That uses Claude Sonnet 5.5 as the answer model and the official GPT-4o judge. Each question gets a single-shot answer from a curated context of about 19k tokens, roughly 1/6 of the conversation history.
 
 Run date: 2026-10-12. Dataset: `longmemeval_s_cleaned.json`, all 500 questions, including the 30 abstention questions.
 
@@ -22,18 +22,18 @@ The memory, retrieval and prompt are identical in every row; only the answer mod
 
 ## Comparison with published systems
 
-All rows use LongMemEval-S, 500 questions and a single-shot answer. We exclude agentic multi-pass answering and retrieval-only metrics (R@k): they measure something else.
+All rows use LongMemEval-S, 500 questions and a single-shot answer. We exclude agentic multi-pass answering. Retrieval-only metrics (R@k) measure something else, so they have [their own table](#retrieval-recall).
 
 | System | Answer model | Judge | Context per question | Accuracy |
 |---|---|---|---|---|
-| Mastra Observational Memory [1] | gpt-5-mini | GPT-4o, LongMemEval prompts | full compressed observation log | 94.9% |
+| [Mastra Observational Memory](https://mastra.ai/research/observational-memory) [1] | gpt-5-mini | GPT-4o, LongMemEval prompts | full compressed observation log | 94.9% |
 | **Kormem** | **Claude Sonnet 5.5** | **GPT-4o-2024-08-06, official `evaluate_qa.py`** | **~19k tokens** | **94.4%** |
 | **Kormem** | **GPT-6.1 Sol** | **same** | **same** | **94.0%** |
-| Mem0 platform v3 [2] | GPT-5 | custom lenient judge (not the official prompts) | top-200 memories, ~7k tokens | 93.4–94.4%¹ |
-| gbrain [3] | Claude Sonnet 4.6 | GPT-4o-2024-08-06, official `evaluate_qa.py` | top-5 full sessions | 86.6% |
-| Supermemory [4] | Gemini 3 Pro / GPT-5 | GPT-4o, LongMemEval prompts | top-20 | 85.2% / 84.6%² |
-| Mastra Observational Memory [1] | GPT-4o | GPT-4o, LongMemEval prompts | full compressed observation log | 84.2% |
-| Zep [5] | GPT-4o | GPT-4o, LongMemEval prompts | ~1.6k tokens | 71.2% |
+| [Mem0 platform v3](https://github.com/mem0ai/memory-benchmarks) [2] | GPT-5 | custom lenient judge (not the official prompts) | top-200 memories, ~7k tokens | 93.4–94.4%¹ |
+| [gbrain](https://github.com/garrytan/gbrain) [3] | Claude Sonnet 4.6 | GPT-4o-2024-08-06, official `evaluate_qa.py` | top-5 full sessions | 86.6% |
+| [Supermemory](https://supermemory.ai/research/longmembench) [4] | Gemini 3 Pro / GPT-5 | GPT-4o, LongMemEval prompts | top-20 | 85.2% / 84.6%² |
+| [Mastra Observational Memory](https://mastra.ai/research/observational-memory) [1] | GPT-4o | GPT-4o, LongMemEval prompts | full compressed observation log | 84.2% |
+| [Zep](https://arxiv.org/abs/2501.13956) [5] | GPT-4o | GPT-4o, LongMemEval prompts | ~1.6k tokens | 71.2% |
 | Full-context baseline [5] | GPT-4o | GPT-4o, LongMemEval prompts | ~115k tokens | 60.2% |
 
 ¹ Mem0's README reports 94.4% (472/500). The committed `results/platform/longmemeval_results.json` says 93.4% (467/500). Their judge is a single unified prompt that explicitly accepts partial abstentions and loose preference matches, so it is more lenient than the official one.
@@ -43,6 +43,28 @@ All rows use LongMemEval-S, 500 questions and a single-shot answer. We exclude a
 - **These are mostly comparisons of answer models.** On identical context, swapping the answer model alone moves Kormem by 6.4 pts (Grok to Sonnet). Older rows with GPT-4o answers can't be separated from the system's own contribution.
 - **gbrain is the closest apples-to-apples row:** same judge and prompts, full-session context and a recent Claude model. Kormem leads by 7.8 pts, but a newer answer model (Sonnet 5.5 vs 4.6) accounts for an unknown share of that.
 - **Kormem is not a low-token system.** It uses about 19k tokens of context, against roughly 7k for Mem0 and 1.6k for Zep.
+
+## Retrieval recall
+
+R@5 asks whether a gold evidence session is among the top 5 retrieved sessions. It measures retrieval only, with no answer and no judge, so it can't be compared with the accuracy table above. [MemPalace](https://github.com/mempalace/mempalace) [6] publishes only this metric for LongMemEval, so we computed Kormem's from the same cached contexts as the accuracy runs.
+
+Session level, all 500 questions. `any@5` is LongMemEval's `recall_any` (at least one gold session in the top 5), which is the published R@5. `all@5` (every gold session in the top 5) is stricter and matters more for multi-session questions.
+
+| System | Ranking | LLM in ranking | any@5 (R@5) | all@5 |
+|---|---|---|---|---|
+| [MemPalace](https://github.com/mempalace/mempalace) raw [6] | semantic search | no | 96.6% | 85.0% |
+| [MemPalace](https://github.com/mempalace/mempalace) hybrid v4, held-out 450 [6] | keyword, time and preference boosts | no | 98.4% | 88.7% |
+| [MemPalace](https://github.com/mempalace/mempalace) hybrid v4 + LLM rerank [6] | top-20 reranked by an LLM | yes | 99.2%¹ | 89.8% |
+| **Kormem** | **session scoring (`gpt-6-luna`, Decisions API)** | **yes** | **97.8%** | **76.0%** |
+
+¹ MemPalace headlines "≥99%" for this mode and says part of the last gap was tuned on specific wrong answers.
+
+- **MemPalace numbers are recomputed from the per-question rankings it commits** (`benchmarks/results_mempal_*_session_*.jsonl`, MemPalace commit `d9bf01e`). Our any@5 matches their published figures exactly; all@5 is our computation from the same files.
+- **Kormem ranks first with a hit, but MemPalace ranks more complete.** Kormem's any@5 is between MemPalace raw and hybrid. On all@5 it trails all three MemPalace modes by 9–14 pts.
+- **Kormem doesn't send the top 5 to the answer model.** It sends a reranked, variable set (mean 4.7 sessions) that holds every gold session for 90.0% of answerable questions (see [Where the errors are](#where-the-errors-are)). Raising all@5 is the clearest retrieval improvement available.
+- **Bounds.** Kormem candidates are matched to sessions by timestamp, and 158 of 15,000 candidate slots share one with another session. Resolving every tie against the gold session gives the figures above; in its favour gives 98.4% / 77.6%.
+
+Reproduce: `python -m benchmark.retrieval_recall contexts/` on the release asset's `contexts/` folder.
 
 ## Where the errors are
 
@@ -108,3 +130,5 @@ python -m benchmark.official_judge out.json
 3. gbrain `CHANGELOG.md`, LongMemEval answer-accuracy entry — https://github.com/garrytan/gbrain
 4. Supermemory, *LongMemEval eval report* — https://supermemory.ai/research/longmembench
 5. Rasmussen et al., *Zep: A Temporal Knowledge Graph Architecture for Agent Memory* (2025) — https://arxiv.org/abs/2501.13956
+6. MemPalace, `benchmarks/BENCHMARKS.md` and committed per-question results — https://github.com/mempalace/mempalace/blob/main/benchmarks/BENCHMARKS.md
+7. Wu et al., *LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory* (ICLR 2025) — https://arxiv.org/abs/2410.10813
