@@ -28,7 +28,11 @@ def _loadDotEnv() -> None:
                 k, _, v = raw.partition("=")
                 os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
             logger.info("loaded env from %s", candidate)
-            return
+            break
+    # The published runs used OpenAI for extraction, query rewriting and recall; kormem's own
+    # default is Gemini (one key), so pin them here to keep runs comparable.
+    for var in ("KORMEM_EXTRACTION_MODEL", "KORMEM_QUERY_MODEL", "KORMEM_RECALL_MODEL"):
+        os.environ.setdefault(var, "gpt-6-luna")
 
 
 def datasetPath(explicit: str | None = None) -> str:

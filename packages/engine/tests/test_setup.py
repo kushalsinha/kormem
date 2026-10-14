@@ -1,5 +1,4 @@
 import os
-import sqlite3
 
 from kormem.core import config as cfg
 
@@ -37,17 +36,53 @@ def test_template_is_private_and_not_overwritten(tmp_path, monkeypatch):
     assert path.read_text() == "GEMINI_API_KEY=x\n"
 
 
-def test_embedding_pin_follows_keys_until_the_index_has_vectors(tmp_path, monkeypatch):
+class _Store:
+    def __init__(self):
+        self.resets = 0
+
+    def resetEmbeddings(self):
+        self.resets += 1
+        return 0
+
+
+def test_provider_switch_drops_vectors_once(tmp_path, monkeypatch):
+    from kormem.embeddings.reembed import switchIfNeeded
+
     monkeypatch.setenv("KORMEM_HOME", str(tmp_path))
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    assert cfg.pinEmbeddingProvider() == ("local", "local")
+    store = _Store()
+    assert switchIfNeeded(store, cfg.loadConfig()) is None  # first start: just records "local"
+    assert cfg.getEmbeddingPinPath().read_text().strip() == "local"
+    assert switchIfNeeded(store, cfg.loadConfig()) is None and store.resets == 0
 
-    monkeypatch.setenv("GEMINI_API_KEY", "k")  # key added before anything was indexed
-    assert cfg.pinEmbeddingProvider() == ("gemini", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "k")  # key added: vectors are dropped and re-made
+    assert switchIfNeeded(store, cfg.loadConfig()) == "local"
+    assert store.resets == 1
+    assert cfg.getEmbeddingPinPath().read_text().strip() == "gemini"
+    assert switchIfNeeded(store, cfg.loadConfig()) is None and store.resets == 1
 
-    with sqlite3.connect(cfg.getIndexPath()) as conn:
-        conn.execute("CREATE TABLE segments (embedding BLOB)")
-        conn.execute("INSERT INTO segments VALUES (x'00')")
-    monkeypatch.delenv("GEMINI_API_KEY")  # key removed after indexing: stay on gemini
-    assert cfg.pinEmbeddingProvider() == ("gemini", "local")
-    assert cfg.loadConfig().embeddingProvider == "gemini"
+
+async def test_reset_then_reembed_restores_every_vector(tmp_path, monkeypatch):
+    from kormem.embeddings.provider import HashEmbeddingProvider
+    from kormem.embeddings.reembed import reembedPending
+    from kormem.ingest.service import IngestService
+    from kormem.store.sqlite_store import SqliteStore
+
+    monkeypatch.setenv("KORMEM_HOME", str(tmp_path / "home"))
+    config = cfg.KormemConfig(defaultNamespace="t", embeddingDim=64, embeddingProvider="hash")
+    store = SqliteStore(indexPath=tmp_path / "i.sqlite", guidancePath=tmp_path / "g.sqlite")
+    ingest = IngestService(store=store, config=config)
+    ingest.embedder = HashEmbeddingProvider(64)
+    await ingest.ingestText("Blue-green deploys on Fly.io. " * 200, namespaceId="t", title="Deploy", enqueue=False)
+    before = len(store.vectorSearch("t", [1.0] * 64, limit=1000))
+    assert before > 1
+
+    store.resetEmbeddings()
+    assert store.vectorSearch("t", [1.0] * 64) == []
+    assert store.getStatus("t")["pendingEmbeds"] == before
+
+    total = 0
+    while n := await reembedPending(store, config, limit=2):
+        total += n
+    assert total == before
+    assert len(store.vectorSearch("t", [1.0] * 64, limit=1000)) == before

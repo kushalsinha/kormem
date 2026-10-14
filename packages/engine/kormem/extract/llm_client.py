@@ -15,6 +15,19 @@ DEFAULT_OPENAI_MODEL = "gpt-6-luna"
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 
 
+def defaultModel(config: KormemConfig) -> str:
+    """Gemini when its key is set (one key runs everything), else OpenAI."""
+    if os.environ.get("GEMINI_API_KEY") or config.geminiApiKey:
+        return DEFAULT_GEMINI_MODEL
+    if os.environ.get("OPENAI_API_KEY") or config.openaiApiKey:
+        return DEFAULT_OPENAI_MODEL
+    return DEFAULT_GEMINI_MODEL
+
+
+def geminiThinking(effort: Optional[str]) -> dict:
+    return {"thinkingConfig": {"thinkingLevel": effort}} if effort in ("minimal", "low", "medium", "high") else {}
+
+
 async def completeLlm(
     prompt: str,
     systemPrompt: str,
@@ -40,12 +53,13 @@ async def completeLlm(
         model
         or os.environ.get("KORMEM_EXTRACTION_MODEL")
         or config.extractionModel
-        or (DEFAULT_OPENAI_MODEL if openaiKey else DEFAULT_GEMINI_MODEL)
+        or defaultModel(config)
     )
 
     if geminiKey and "gemini" in extractionModel.lower():
         return await _completeGemini(
             prompt, systemPrompt, geminiKey, extractionModel, temperature, maxTokens, purpose, jsonMode,
+            reasoningEffort or os.environ.get("KORMEM_QUERY_REASONING_EFFORT"),
         )
     if openaiKey:
         return await _completeOpenAi(
@@ -106,8 +120,9 @@ async def _completeGemini(
     maxTokens: int,
     purpose: str = "llm",
     jsonMode: bool = False,
+    reasoningEffort: Optional[str] = None,
 ) -> str:
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=300.0) as client:
         resp = await client.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
             headers={"x-goog-api-key": apiKey},  # never in the URL: URLs end up in logs
@@ -118,6 +133,7 @@ async def _completeGemini(
                     "temperature": temperature,
                     "maxOutputTokens": maxTokens,
                     **({"responseMimeType": "application/json"} if jsonMode else {}),
+                    **geminiThinking(reasoningEffort),
                 },
             },
         )
@@ -127,5 +143,5 @@ async def _completeGemini(
         usage.record(purpose, model, {"input_tokens": meta.get("promptTokenCount", 0),
                                       "output_tokens": meta.get("candidatesTokenCount", 0),
                                       "output_tokens_details": {"reasoning_tokens": meta.get("thoughtsTokenCount", 0)}})
-        parts = data["candidates"][0]["content"]["parts"]
-        return parts[0]["text"]
+        parts = data["candidates"][0].get("content", {}).get("parts") or []
+        return "".join(p.get("text", "") for p in parts if not p.get("thought"))

@@ -464,24 +464,6 @@ class SqliteStore(MemoryTablesMixin):
             )
             return cur.fetchall()
 
-    def getSegmentsForEmbed(
-        self,
-        force: bool = False,
-        limit: int = 500,
-    ) -> List[sqlite3.Row]:
-        with self._connectIndex() as conn:
-            if force:
-                cur = conn.execute(
-                    "SELECT * FROM segments WHERE kind='segment' LIMIT ?",
-                    (limit,),
-                )
-            else:
-                cur = conn.execute(
-                    f"SELECT * FROM segments WHERE {UNEMBEDDED} LIMIT ?",
-                    (limit,),
-                )
-            return cur.fetchall()
-
     def getStoredEmbeddingDims(self) -> List[int]:
         with self._connectIndex() as conn:
             rows = conn.execute(
@@ -491,6 +473,48 @@ class SqliteStore(MemoryTablesMixin):
                 """
             ).fetchall()
         return [int(r["embeddingDim"]) for r in rows if r["embeddingDim"] is not None]
+
+    def resetEmbeddings(self) -> int:
+        """Drop every vector so the background worker re-embeds with the current model.
+
+        Memory-line vectors are keyed by model and recomputed on use, so their rows go.
+        Vectors dropped on purpose (``embeddingDim`` 0) stay dropped.
+        """
+        with self._connectIndex() as conn:
+            conn.execute("DELETE FROM segments_fts WHERE rowid IN (SELECT rowid FROM segments WHERE kind='memory')")
+            conn.execute("DELETE FROM segments WHERE kind='memory'")
+            n = conn.execute(
+                "UPDATE segments SET embedding=NULL, embeddingDim=NULL WHERE embedding IS NOT NULL"
+            ).rowcount
+            conn.execute("UPDATE vault_folders SET embedding=NULL WHERE embedding IS NOT NULL")
+            conn.commit()
+        return n
+
+    def segmentsWithoutVectors(self, limit: int, namespaceId: Optional[str] = None) -> List[sqlite3.Row]:
+        sql = f"SELECT * FROM segments WHERE {UNEMBEDDED}"
+        params: List[Any] = []
+        if namespaceId:
+            sql += " AND namespaceId=?"
+            params.append(namespaceId)
+        with self._connectIndex() as conn:
+            return conn.execute(sql + " LIMIT ?", (*params, limit)).fetchall()
+
+    def markEmbeddingDropped(self, segmentKey: str) -> None:
+        with self._connectIndex() as conn:
+            conn.execute("UPDATE segments SET embeddingDim=0 WHERE segmentKey=?", (segmentKey,))
+            conn.commit()
+
+    def foldersWithoutVectors(self) -> List[sqlite3.Row]:
+        with self._connectIndex() as conn:
+            return conn.execute(
+                "SELECT * FROM vault_folders WHERE status='active' AND embedding IS NULL"
+            ).fetchall()
+
+    def setFolderEmbedding(self, namespaceId: str, path: str, embedding: List[float]) -> None:
+        with self._connectIndex() as conn:
+            conn.execute("UPDATE vault_folders SET embedding=? WHERE namespaceId=? AND path=?",
+                         (json.dumps(list(map(float, embedding))), namespaceId, path))
+            conn.commit()
 
     def updateSegmentEmbedding(self, segmentKey: str, embedding: List[float]) -> None:
         blob = _packEmbedding(embedding)

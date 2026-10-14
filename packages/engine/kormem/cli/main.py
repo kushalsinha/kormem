@@ -101,15 +101,16 @@ def cmdInit(args) -> None:
     emb = e.get("/embeddings/status")
     print(f"engine        running at {baseUrl()}, log {logPath()}")
     print(f"embeddings    {emb['provider']} / {emb['model']}")
-    extraction = "on" if {"GEMINI_API_KEY", "OPENAI_API_KEY"} & set(keys) else "waiting for GEMINI_API_KEY or OPENAI_API_KEY"
-    print(f"extraction    {extraction} (files chats, notes and facts into the vault in the background)")
-    print(f"recall agent  {'on' if 'OPENAI_API_KEY' in keys else 'waiting for OPENAI_API_KEY'}")
+    llm = bool({"GEMINI_API_KEY", "OPENAI_API_KEY"} & set(keys))
+    print(f"extraction    {'on' if llm else 'waiting for GEMINI_API_KEY'} "
+          "(files chats, notes and facts into the vault in the background)")
+    print(f"recall agent  {'on' if llm else 'waiting for GEMINI_API_KEY'}")
     hours = float(os.environ.get("KORMEM_MAINTAIN_HOURS", "24"))
     print(f"maintenance   {f'on (merges, condenses and archives notes every {hours:g} h)' if hours > 0 else 'only on request'}")
     if not args.skip_agents:
         print(f"claude code   {_claudeCode()}")
     if not keys:
-        print(f"\nAdd keys to {envPath}; the next kormem command restarts the engine with them.")
+        print(f"\nAdd GEMINI_API_KEY to {envPath}; the next kormem command restarts the engine with it.")
     print("\nNext: kormem collection add <folder> --name <name>, then kormem query \"...\"")
 
 
@@ -464,9 +465,8 @@ def cmdDoctor(args) -> None:
     if not os.environ.get("GEMINI_API_KEY"):
         print("              embeddings fall back to a local model (BAAI/bge-base-en-v1.5)")
     if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("OPENAI_API_KEY")):
-        print("              extraction into the vault needs GEMINI_API_KEY or OPENAI_API_KEY")
-    if not os.environ.get("OPENAI_API_KEY"):
-        print("              the recall agent needs OPENAI_API_KEY; query returns its first pass without it")
+        print("              extraction and the recall agent need GEMINI_API_KEY; "
+              "query returns its first pass without it")
     e = _engine(args)
     try:
         e.ensure()

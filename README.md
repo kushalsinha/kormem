@@ -64,19 +64,13 @@ kormem lessons                              # what you've told assistants about 
 - **Maintenance**: merges, condenses and archives notes once a day.
 - **Claude Code**: if `claude` is installed, the plugin (MCP server, session hooks, recall skill). Skip with `--skip-agents`.
 
-Every key is optional; each one turns more on:
+kormem needs one key. `GEMINI_API_KEY` ([get one](https://aistudio.google.com/apikey)) runs everything: embeddings (`gemini-embedding-2`), extraction into the vault and the recall agent (`gemini-3.8-flash`). Without it, kormem still indexes and searches, with local embeddings (`BAAI/bge-base-en-v1.5`), but nothing is filed into the vault and `query` returns ranked notes and sources without agent findings.
 
-| Key | Turns on | Without it |
-|---|---|---|
-| `GEMINI_API_KEY` | Gemini embeddings (`gemini-embedding-2`) and extraction | Local embeddings (`BAAI/bge-base-en-v1.5`); extraction uses OpenAI |
-| `OPENAI_API_KEY` | The recall agent behind `query`, and extraction | `query` returns ranked notes and sources, no agent findings |
-| `FIRECRAWL_API_KEY` | Cleaner page text for `kormem ingest <url>` | A plain HTTP fetch |
+Prefer OpenAI for extraction and recall? Set `OPENAI_API_KEY` instead. It is used when it is the only key, or when `KORMEM_EXTRACTION_MODEL` / `KORMEM_RECALL_MODEL` name a `gpt-*` model.
 
-With neither Gemini nor OpenAI, what you add is indexed and searchable but not filed into the vault.
+Keys already set in your environment win over the file. Add or remove a key later and the next `kormem` command restarts the engine with the change. `kormem doctor` shows what is set.
 
-Keys already set in your environment win over the file. Add a key later and the next `kormem` command restarts the engine with it. `kormem doctor` shows what is set.
-
-An index stays on the embeddings it was built with, because vectors from different models can't be compared. Add `GEMINI_API_KEY` before indexing if you want Gemini embeddings.
+Vectors from different models can't be compared, so when the embedding provider changes (say you add `GEMINI_API_KEY` after indexing locally), kormem drops the old vectors and re-embeds everything in the background. Keyword search works throughout; `kormem status` shows how many chunks are still waiting.
 
 The npm package is a small launcher. On first run it installs the matching `kormem` Python package into `~/.kormem/engine`, using [uv](https://docs.astral.sh/uv/) if you have it (it fetches Python for you), otherwise Python 3.11+ with pip. After that, a command starts in about 0.1 s.
 
@@ -207,7 +201,7 @@ kormem notes links "Deploy process"        # outbound links and backlinks
 ```sh
 kormem status                  # sources, chunks, queues, collections, embedding provider
 kormem doctor                  # install, keys, engine
-kormem embed [-f]              # embed what's waiting; -f re-embeds everything (after changing provider)
+kormem embed [-f]              # embed what's waiting now; -f re-embeds everything
 kormem cleanup [--vacuum]      # compact the index, no model calls
 kormem maintain [--vacuum]     # cleanup + archive, merge and condense notes (runs daily by itself)
 kormem stop                    # stop the background engine (the next command restarts it)
@@ -287,7 +281,9 @@ stateDiagram-v2
   Archived --> Current: new knowledge about it arrives
 ```
 
-In our tests on 60 users' histories, a maintenance pass cut the index from 403 MB to 186 MB in about 10 seconds. Condensing costs about $0.008 per user.
+<!-- benchmark:start -->
+On a copy of 60 LongMemEval users, a maintenance pass cut the index from 403 MB to 186 MB in about 10 seconds. Condensing costs about $0.008 per user.
+<!-- benchmark:end -->
 
 ## Data storage
 
@@ -310,8 +306,9 @@ In our tests on 60 users' histories, a maintenance pass cut the index from 403 M
 |---|---|---|
 | `KORMEM_HOME` | `~/.kormem` | Data directory |
 | `KORMEM_NAMESPACE` | `main` | Memory namespace; or `--namespace` on any command |
-| `GEMINI_API_KEY` | unset | Gemini embeddings (`gemini-embedding-2`, 768-d) and extraction |
-| `OPENAI_API_KEY` | unset | Extraction and the recall agent |
+| `GEMINI_API_KEY` | unset | The one key: embeddings (`gemini-embedding-2`, 768-d), extraction and the recall agent |
+| `OPENAI_API_KEY` | unset | Optional: OpenAI for extraction and recall instead of Gemini |
+| `KORMEM_EXTRACTION_MODEL` / `KORMEM_QUERY_MODEL` / `KORMEM_RECALL_MODEL` | `gemini-3.8-flash` | Models for extraction, query rewriting and the recall agent |
 | `FIRECRAWL_API_KEY` | unset | Page text for URL ingest |
 | `KORMEM_ENV_FILE` | `~/.kormem/.env` | Where keys and settings are read from |
 | `KORMEM_ENGINE_PORT` / `KORMEM_ENGINE_URL` | `8787` | Where the engine listens |
@@ -328,6 +325,24 @@ In our tests on 60 users' histories, a maintenance pass cut the index from 403 M
 | `KORMEM_ENGINE_SPEC` | `kormem==<version>` | npm launcher: what to install (a version, wheel or git URL) |
 | `KORMEM_DEBUG` | unset | Print hook errors instead of dropping them |
 
+<!-- benchmark:start -->
+## Benchmark
+
+LongMemEval-S, all 500 questions, scored by the official GPT-4o judge (`evaluate_qa.py`). Each question gets one answer from a curated context of about 19k tokens.
+
+| System | Answer model | Accuracy |
+|---|---|---|
+| Mastra Observational Memory | gpt-5-mini | 94.9% |
+| **Kormem** | **Claude Sonnet 5.5** | **94.4%** |
+| **Kormem** | **GPT-6.1 Sol** | **94.0%** |
+| Mem0 platform | GPT-5 (custom judge) | 93.4–94.4% |
+| gbrain | Claude Sonnet 4.6 | 86.6% |
+| Supermemory | Gemini 3 Pro | 85.2% |
+| Zep | GPT-4o | 71.2% |
+
+Other systems' numbers are self-reported; see the [full report](docs/benchmarks/longmemeval.md) for setups and caveats. The answer model accounts for much of the spread: on identical context, Kormem ranges from 88.0% (Grok 4.7) to 94.4% (Sonnet 5.5).
+
+<!-- benchmark:end -->
 ## Development
 
 ```sh

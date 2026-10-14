@@ -15,10 +15,8 @@ from fastapi import FastAPI, HTTPException
 
 from kormem import __version__
 from kormem.connectors.service import ConnectorService
-from kormem.core.config import (
-    apiKeysSet, ensureKormemLayout, getKormemHome, loadConfig, loadEnvFile, pinEmbeddingProvider,
-    selectedEmbeddingProvider,
-)
+from kormem.core.config import apiKeysSet, ensureKormemLayout, getKormemHome, loadConfig, loadEnvFile
+from kormem.embeddings.reembed import reembedPending, switchIfNeeded
 from kormem import library
 from kormem.core.schemas import (
     CollectionAddRequest,
@@ -68,11 +66,9 @@ MAINTAIN_HOURS = float(os.environ.get("KORMEM_MAINTAIN_HOURS", "24"))
 def createApp() -> FastAPI:
     loadEnvFile()
     ensureKormemLayout()
-    pinned, selected = pinEmbeddingProvider()
-    if pinned != selected:
-        logger.warning("the index was built with %s embeddings; keeping them (keys select %s)", pinned, selected)
     config = loadConfig()
     ingest = IngestService(config=config)
+    switchIfNeeded(ingest.store, config)
     rag = RagService(config=config)
     connectors = ConnectorService(ingest=ingest, config=config)
     worker = IngestionWorker()
@@ -94,12 +90,31 @@ def createApp() -> FastAPI:
             for report in await maintainAll(ingest.store, config, ingest.store.listNamespaces()):
                 logger.info("maintenance: %s", report)
 
+    reembedRetryAt = 0.0
+
+    async def _reembed() -> int:
+        """Give vectors to segments without one (after a provider switch, or a failed embed)."""
+        nonlocal reembedRetryAt
+        import time
+
+        if time.time() < reembedRetryAt:
+            return 0
+        try:
+            async with workerLock:
+                return await reembedPending(ingest.store, config)
+        except Exception:
+            logger.exception("re-embedding failed; retrying in 5 minutes")
+            reembedRetryAt = time.time() + 300
+            return 0
+
     async def _workerLoop() -> None:
-        """Drain ingestion and extraction jobs for as long as the server runs."""
+        """Drain ingestion, extraction and re-embedding for as long as the server runs."""
         while True:
             try:
                 async with workerLock:
                     n = await worker.processBatch()
+                if not n:
+                    n = await _reembed()
                 if not n:
                     await _maintainIfDue()
             except Exception:
@@ -282,7 +297,8 @@ def createApp() -> FastAPI:
 
     @app.post("/embed")
     async def embed(namespaceId: Optional[str] = None, force: bool = False) -> dict[str, int]:
-        n = await ingest.embedPending(namespaceId, force=force)
+        async with workerLock:
+            n = await ingest.embedPending(namespaceId, force=force)
         return {"embedded": n}
 
     @app.get("/embeddings/status")
@@ -294,12 +310,6 @@ def createApp() -> FastAPI:
             warnings.append(
                 f"Config embeddingDim={config.embeddingDim} but index has dims {storedDims}. "
                 "Run `kormem embed -f` to re-embed."
-            )
-        selected = selectedEmbeddingProvider(loadConfig(pinned=False))
-        if storedDims and active["provider"] != selected:
-            warnings.append(
-                f"The index was built with {active['provider']} embeddings and stays on them "
-                f"(your keys now select {selected}): vectors from different models can't be mixed."
             )
         if storedDims and len(storedDims) > 1:
             warnings.append(f"Mixed embedding dimensions in index: {storedDims}")

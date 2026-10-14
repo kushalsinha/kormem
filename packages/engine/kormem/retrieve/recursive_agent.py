@@ -34,6 +34,7 @@ import httpx
 
 from kormem.core import usage
 from kormem.core.config import KormemConfig, loadConfig
+from kormem.extract.llm_client import defaultModel, geminiThinking
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +136,116 @@ async def _respond(model: str, apiKey: str, input: List[Dict[str, Any]], previou
     raise RuntimeError("unreachable")
 
 
+def _geminiTools() -> List[Dict[str, Any]]:
+    decls = []
+    for t in TOOLS:
+        d: Dict[str, Any] = {"name": t["name"], "description": t["description"]}
+        if t["parameters"]["properties"]:  # Gemini rejects an object schema with no properties
+            d["parameters"] = t["parameters"]
+        decls.append(d)
+    return [{"functionDeclarations": decls}]
+
+
+async def _respondGemini(model: str, apiKey: str, contents: List[Dict[str, Any]], effort: str,
+                         final: bool) -> Dict[str, Any]:
+    body: Dict[str, Any] = {
+        "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+        "contents": contents,
+        "tools": _geminiTools(),
+        "toolConfig": {"functionCallingConfig": (
+            {"mode": "ANY", "allowedFunctionNames": ["finish"]} if final else {"mode": "AUTO"})},
+        "generationConfig": {"maxOutputTokens": 16000, **geminiThinking(effort)},
+    }
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    for attempt in range(4):
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                resp = await client.post(url, headers={"x-goog-api-key": apiKey}, json=body)
+                if resp.status_code == 400:
+                    raise ValueError(f"recall agent request rejected: {resp.text[:300]}")
+                resp.raise_for_status()
+                data = resp.json()
+                meta = data.get("usageMetadata") or {}
+                usage.record("recall.agent", model, {
+                    "input_tokens": meta.get("promptTokenCount", 0),
+                    "output_tokens": meta.get("candidatesTokenCount", 0),
+                    "output_tokens_details": {"reasoning_tokens": meta.get("thoughtsTokenCount", 0)}})
+                return data
+        except ValueError:
+            raise
+        except Exception as e:
+            if attempt == 3:
+                raise
+            logger.warning("recall agent call failed (%s); retrying", str(e)[:120])
+            await asyncio.sleep(2 ** (attempt + 1))
+    raise RuntimeError("unreachable")
+
+
+class _OpenAiTurns:
+    """Conversation state on OpenAI's Responses API (the server keeps the history)."""
+
+    def __init__(self, model: str, apiKey: str, question: str, briefing: str):
+        self.model, self.apiKey = model, apiKey
+        self.previousId: Optional[str] = None
+        self.pending: List[Dict[str, Any]] = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"Question: {question}\n\n{briefing}"},
+        ]
+
+    def say(self, text: str) -> None:
+        self.pending.append({"role": "user", "content": text})
+
+    async def step(self, effort: str, final: bool) -> List[Dict[str, Any]]:
+        resp = await _respond(self.model, self.apiKey, self.pending, self.previousId, effort,
+                              {"type": "function", "name": "finish"} if final else "auto")
+        self.previousId, self.pending = resp["id"], []
+        calls = []
+        for o in resp.get("output", []):
+            if o.get("type") == "function_call":
+                try:
+                    args = json.loads(o.get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                calls.append({"name": o["name"], "args": args, "id": o["call_id"]})
+        return calls
+
+    def results(self, done: List[tuple]) -> None:
+        for call, result in done:
+            self.pending.append({"type": "function_call_output", "call_id": call["id"], "output": result})
+
+
+class _GeminiTurns:
+    """Conversation state for Gemini: the full history is resent, model turns verbatim
+    (their thought signatures must come back unchanged)."""
+
+    def __init__(self, model: str, apiKey: str, question: str, briefing: str):
+        self.model, self.apiKey = model, apiKey
+        self.contents: List[Dict[str, Any]] = [
+            {"role": "user", "parts": [{"text": f"Question: {question}\n\n{briefing}"}]}]
+        self.userParts: List[Dict[str, Any]] = []
+
+    def say(self, text: str) -> None:
+        self.userParts.append({"text": text})
+
+    async def step(self, effort: str, final: bool) -> List[Dict[str, Any]]:
+        if self.userParts:
+            self.contents.append({"role": "user", "parts": self.userParts})
+            self.userParts = []
+        resp = await _respondGemini(self.model, self.apiKey, self.contents, effort, final)
+        content = ((resp.get("candidates") or [{}])[0].get("content") or {})
+        parts = content.get("parts") or []
+        self.contents.append({"role": "model", "parts": parts})
+        return [{"name": p["functionCall"]["name"], "args": p["functionCall"].get("args") or {},
+                 "id": p["functionCall"].get("id")} for p in parts if "functionCall" in p]
+
+    def results(self, done: List[tuple]) -> None:
+        for call, result in done:
+            fr: Dict[str, Any] = {"name": call["name"], "response": {"result": result}}
+            if call.get("id"):
+                fr["id"] = call["id"]
+            self.userParts.append({"functionResponse": fr})
+
+
 async def recursiveRecall(
     question: str,
     briefing: str,
@@ -152,16 +263,16 @@ async def recursiveRecall(
     """
     config = config or loadConfig()
     reasoning, maxRounds = EFFORT.get(effort, EFFORT["low"])
-    model = model or os.environ.get("KORMEM_RECALL_MODEL") or config.queryModel
-    apiKey = os.environ.get("OPENAI_API_KEY") or config.openaiApiKey or ""
+    model = model or os.environ.get("KORMEM_RECALL_MODEL") or config.queryModel or defaultModel(config)
+    if "gemini" in model.lower():
+        apiKey = os.environ.get("GEMINI_API_KEY") or config.geminiApiKey or ""
+        turns: Any = _GeminiTurns(model, apiKey, question, briefing)
+    else:
+        apiKey = os.environ.get("OPENAI_API_KEY") or config.openaiApiKey or ""
+        turns = _OpenAiTurns(model, apiKey, question, briefing)
     if not apiKey:
-        raise RuntimeError("OPENAI_API_KEY not set for the recall agent")
+        raise RuntimeError("the recall agent needs GEMINI_API_KEY (or OPENAI_API_KEY)")
 
-    pending: List[Dict[str, Any]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"Question: {question}\n\n{briefing}"},
-    ]
-    previousId: Optional[str] = None
     calls: List[Dict[str, Any]] = []
     notesRead: List[str] = []
     sourcesRead: List[str] = []
@@ -169,21 +280,14 @@ async def recursiveRecall(
     for roundIdx in range(maxRounds + 1):
         last = roundIdx == maxRounds
         if last:
-            pending.append({"role": "user", "content": "Tool budget used up. Call finish now with what you have."})
-        resp = await _respond(model, apiKey, pending, previousId, reasoning,
-                              {"type": "function", "name": "finish"} if last else "auto")
-        previousId = resp["id"]
-        fnCalls = [o for o in resp.get("output", []) if o.get("type") == "function_call"]
-        pending = []
+            turns.say("Tool budget used up. Call finish now with what you have.")
+        fnCalls = await turns.step(reasoning, last)
         if not fnCalls:
-            pending.append({"role": "user", "content": "Call finish to return your result."})
+            turns.say("Call finish to return your result.")
             continue
         parsed = []
         for call in fnCalls:
-            try:
-                args = json.loads(call.get("arguments") or "{}")
-            except json.JSONDecodeError:
-                args = {}
+            args = call["args"] if isinstance(call["args"], dict) else {}
             if call["name"] == "finish":
                 srcs = [str(s).strip().strip("[]") for s in args.get("sources", [])]
                 return RecallResult(
@@ -209,7 +313,7 @@ async def recursiveRecall(
             elif name == "read_source":
                 sourcesRead.append(str(args.get("source_id")))
             calls.append({"name": name, "args": args, "resultChars": len(result)})
-            pending.append({"type": "function_call_output", "call_id": call["call_id"], "output": result})
+        turns.results([(call, result) for (call, _), result in zip(parsed, results)])
 
     return RecallResult(sources=[s for s in sourcesRead if s in validSources], findings=[],
                         rounds=maxRounds, toolCalls=calls, notesRead=notesRead, sourcesRead=sourcesRead)

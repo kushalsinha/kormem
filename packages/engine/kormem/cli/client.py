@@ -60,11 +60,9 @@ def _isLocal(url: str) -> bool:
     return (urlparse(url).hostname or "") in ("127.0.0.1", "localhost", "::1")
 
 
-def _missingKeys(health: dict) -> bool:
-    """Keys this process has that the running engine does not (old engines report none)."""
-    if "keys" not in health:
-        return False
-    return bool(set(apiKeysSet()) - set(health["keys"]))
+def _keysChanged(health: dict) -> bool:
+    """A key was added or removed since the running engine started (old engines report none)."""
+    return "keys" in health and set(apiKeysSet()) != set(health["keys"])
 
 
 def logPath() -> Path:
@@ -97,8 +95,8 @@ class Engine:
         if self._ready:
             return
         h = self.health()
-        if h and _isLocal(self.url) and (h.get("version") != __version__ or _missingKeys(h)):
-            self.stop()  # another version, or started before a key was added to the env file
+        if h and _isLocal(self.url) and (h.get("version") != __version__ or _keysChanged(h)):
+            self.stop()  # another version, or the API keys changed since it started
             h = None
         if not h:
             if not _isLocal(self.url):

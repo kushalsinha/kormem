@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -22,7 +21,7 @@ INTERNAL_EMBED_DIMS = {"BAAI/bge-small-en-v1.5": 384, "BAAI/bge-base-en-v1.5": 7
 DEFAULT_EMBEDDING_PROVIDER = "gemini"
 DEFAULT_ENGINE_PORT = 8787
 DEFAULT_RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-DEFAULT_QUERY_MODEL = "gpt-6-luna"
+DEFAULT_QUERY_MODEL = ""  # empty: pick by available key (see extract.llm_client)
 DEFAULT_EXTRACTION_MODEL = ""  # empty: pick by available key (see extract.llm_client)
 
 
@@ -56,19 +55,15 @@ def getEnvPath(home: Optional[Path] = None) -> Path:
 API_KEYS = ("GEMINI_API_KEY", "OPENAI_API_KEY", "FIRECRAWL_API_KEY")
 
 ENV_TEMPLATE = """\
-# kormem API keys. Variables already set in the environment win.
-# Every key is optional: kormem runs fully local without them, with less.
-
-# Embeddings (gemini-embedding-2) and extraction into the vault.
-# Without it: local embeddings (BAAI/bge-base-en-v1.5), extraction uses OpenAI.
+# kormem needs one key: GEMINI_API_KEY runs embeddings, extraction into the
+# vault and the recall agent. Get one at https://aistudio.google.com/apikey
+# Without it, kormem still indexes and searches with a local model.
+# Variables already set in the environment win over this file.
 GEMINI_API_KEY=
 
-# The recall agent behind `kormem query`, and extraction.
-# Without it: query returns ranked notes and sources, no agent findings.
-OPENAI_API_KEY=
-
-# Optional: better page text for `kormem ingest <url>`.
-FIRECRAWL_API_KEY=
+# Optional: OpenAI for extraction and recall instead. Used when it is the only
+# LLM key, or with KORMEM_EXTRACTION_MODEL / KORMEM_RECALL_MODEL set to a gpt-* model.
+# OPENAI_API_KEY=
 """
 
 
@@ -256,21 +251,17 @@ class KormemConfig:
         }
 
 
-def loadConfig(home: Optional[Path] = None, pinned: bool = True) -> KormemConfig:
-    """``pinned``: use the embedding provider the index was built with (see :func:`pinEmbeddingProvider`)."""
+def loadConfig(home: Optional[Path] = None) -> KormemConfig:
     path = getConfigPath(home)
-    data: dict[str, Any] = {}
-    if path.exists():
-        with path.open("r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-    config = KormemConfig.fromDict(data)  # also reads API keys and settings from the environment
-    pin = getEmbeddingPinPath(home)
-    if pinned and pin.exists():
-        config.embeddingProvider = pin.read_text(encoding="utf-8").strip() or config.embeddingProvider
-    return config
+    if not path.exists():
+        return KormemConfig.fromDict({})  # still reads API keys and settings from the environment
+    with path.open("r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    return KormemConfig.fromDict(data)
 
 
 def getEmbeddingPinPath(home: Optional[Path] = None) -> Path:
+    """The embedding provider the stored vectors were made with (see kormem.embeddings.reembed)."""
     return (home or getKormemHome()) / "embedding-provider"
 
 
@@ -282,31 +273,6 @@ def selectedEmbeddingProvider(config: KormemConfig) -> str:
     return "gemini" if config.geminiApiKey else "local"
 
 
-def _indexHasVectors(home: Optional[Path] = None) -> bool:
-    path = getIndexPath(home)
-    if not path.exists():
-        return False
-    try:
-        with sqlite3.connect(path) as conn:
-            return conn.execute("SELECT 1 FROM segments WHERE embedding IS NOT NULL LIMIT 1").fetchone() is not None
-    except sqlite3.Error:
-        return False
-
-
-def pinEmbeddingProvider(home: Optional[Path] = None) -> tuple[str, str]:
-    """Keep the index on the embeddings it was built with. Returns (pinned, selected).
-
-    Vectors from different models can't be compared, so once the index holds
-    vectors, adding or removing GEMINI_API_KEY doesn't switch providers. While
-    the index is empty the pin follows the keys.
-    """
-    selected = selectedEmbeddingProvider(loadConfig(home, pinned=False))
-    pin = getEmbeddingPinPath(home)
-    if pin.exists() and _indexHasVectors(home):
-        return pin.read_text(encoding="utf-8").strip() or selected, selected
-    pin.parent.mkdir(parents=True, exist_ok=True)
-    pin.write_text(selected + "\n", encoding="utf-8")
-    return selected, selected
 
 
 def saveConfig(config: KormemConfig, home: Optional[Path] = None) -> Path:

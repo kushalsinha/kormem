@@ -42,7 +42,7 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "prepack": "tsc && cp ../../README.md ../../LICENSE ."
+    "prepack": "tsc && node scripts/readme.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

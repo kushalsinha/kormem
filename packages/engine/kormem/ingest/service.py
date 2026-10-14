@@ -188,28 +188,13 @@ class IngestService:
         )
         return len(segments)
 
-    async def embedPending(
-        self,
-        namespaceId: Optional[str] = None,
-        limit: int = 100,
-        force: bool = False,
-    ) -> int:
-        namespaceId = namespaceId or self.config.defaultNamespace
-        rows = self.store.getSegmentsForEmbed(force=force, limit=limit)
-        count = 0
-        texts: List[str] = []
-        keys: List[str] = []
-        for row in rows:
-            if namespaceId and row["namespaceId"] != namespaceId:
-                continue
-            text = self.store.getSegmentText(row, self.config.encryptionKey)
-            if text:
-                texts.append(text)
-                keys.append(row["segmentKey"])
-        if not texts:
-            return 0
-        embeddings = await self.embedder.encodeBatch(texts)
-        for key, emb in zip(keys, embeddings):
-            self.store.updateSegmentEmbedding(key, emb)
-            count += 1
-        return count
+    async def embedPending(self, namespaceId: Optional[str] = None, force: bool = False) -> int:
+        """Embed every segment still without a vector; ``force`` re-embeds the whole index."""
+        from kormem.embeddings.reembed import reembedPending
+
+        if force:
+            self.store.resetEmbeddings()
+        total = 0
+        while n := await reembedPending(self.store, self.config, namespaceId=None if force else namespaceId):
+            total += n
+        return total

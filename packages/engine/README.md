@@ -18,6 +18,6 @@ kormem remember "I prefer pnpm over npm"
 kormem mcp                                  # MCP server for Claude Code, Claude Desktop, Cursor
 ```
 
-Put `GEMINI_API_KEY` (embeddings, extraction) and/or `OPENAI_API_KEY` (extraction, recall agent) in `~/.kormem/.env`, which `kormem init` creates. Every key is optional. `kormem doctor` checks the setup.
+kormem needs one key: put `GEMINI_API_KEY` in `~/.kormem/.env`, which `kormem init` creates. It runs embeddings, extraction and the recall agent. Without it, kormem still indexes and searches locally. `kormem doctor` checks the setup.
 
 Full documentation, diagrams and the Claude Code plugin: https://github.com/kushalsinha/kormem
