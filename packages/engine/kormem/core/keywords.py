@@ -38,6 +38,24 @@ def hashKeywords(text: str, maxKeywords: int = 25) -> List[str]:
     return [computeHash(kw) for kw in unique[:maxKeywords]]
 
 
+def wordVariants(word: str) -> List[str]:
+    """The word plus simple plural / tense forms, so "rollback" also finds "rollbacks"."""
+    w = word.lower()
+    out = {w, w + "s", w + "es", w + "ed", w + "ing"}
+    for suffix in ("ies", "es", "s", "ed", "ing"):
+        if w.endswith(suffix) and len(w) - len(suffix) >= 3:
+            stem = w[: -len(suffix)]
+            out |= {stem, stem + "s", stem + "e", stem + "y" if suffix == "ies" else stem}
+    return sorted(out)
+
+
+def queryKeywordGroups(text: str, maxKeywords: int = 25) -> List[List[str]]:
+    """Hashes per query word: each group is one word and its variants (a match counts once)."""
+    words = [w.lower() for w in re.findall(r"\b[a-zA-Z0-9]+\b", text or "")]
+    unique = list(dict.fromkeys(w for w in words if w not in STOP_WORDS and len(w) > 2))
+    return [[computeHash(v) for v in wordVariants(w)] for w in unique[:maxKeywords]]
+
+
 def extractTfidfKeywords(text: str, maxKeywords: int = 25) -> Dict[str, float]:
     words = re.findall(r"\b[a-zA-Z0-9]+\b", text.lower())
     freq: Dict[str, int] = {}

@@ -1,11 +1,10 @@
 import { spawn } from "node:child_process";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { enginePython } from "./engine.js";
 import { getEngineBaseUrl } from "./paths.js";
 
 let engineProcess: ReturnType<typeof spawn> | null = null;
 
-async function waitForHealth(baseUrl: string, maxMs = 15000): Promise<void> {
+async function waitForHealth(baseUrl: string, maxMs = 90000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < maxMs) {
     try {
@@ -19,11 +18,6 @@ async function waitForHealth(baseUrl: string, maxMs = 15000): Promise<void> {
   throw new Error(`Kormem engine not reachable at ${baseUrl}`);
 }
 
-export function findEngineModule(): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  return join(here, "..", "..", "engine");
-}
-
 export async function ensureEngineRunning(): Promise<string> {
   const baseUrl = getEngineBaseUrl();
   try {
@@ -34,22 +28,13 @@ export async function ensureEngineRunning(): Promise<string> {
   }
 
   if (!engineProcess) {
-    const engineDir = findEngineModule();
+    const { python, env } = enginePython();
     const port = new URL(baseUrl).port || "8787";
-    engineProcess = spawn(
-      "python3",
-      ["-m", "kormem.cli", "serve", "--port", port],
-      {
-        cwd: engineDir,
-        stdio: "ignore",
-        detached: true,
-        env: {
-          ...process.env,
-          PYTHONPATH: engineDir,
-          KORMEM_HOME: process.env.KORMEM_HOME || "",
-        },
-      },
-    );
+    engineProcess = spawn(python, ["-m", "kormem.cli", "serve", "--port", port], {
+      stdio: "ignore",
+      detached: true,
+      env,
+    });
     engineProcess.unref();
   }
   await waitForHealth(baseUrl);

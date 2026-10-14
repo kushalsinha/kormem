@@ -312,6 +312,54 @@ class MemoryTablesMixin:
                 (namespaceId,),
             ).fetchall()
 
+    def documentsForCollection(self, namespaceId: str, collectionId: str) -> List[sqlite3.Row]:
+        with self._connectIndex() as conn:
+            return conn.execute(
+                "SELECT id, title, canonicalUrl, contentHash, metadata FROM documents "
+                "WHERE namespaceId=? AND collectionId=? ORDER BY canonicalUrl",
+                (namespaceId, collectionId),
+            ).fetchall()
+
+    def collectionCounts(self, namespaceId: str) -> Dict[str, int]:
+        with self._connectIndex() as conn:
+            return {r[0]: r[1] for r in conn.execute(
+                "SELECT collectionId, COUNT(*) FROM documents WHERE namespaceId=? AND collectionId IS NOT NULL "
+                "GROUP BY collectionId", (namespaceId,))}
+
+    def findDocuments(self, namespaceId: str, idPrefix: str = "", url: str = "", urlSuffix: str = "",
+                      title: str = "") -> List[sqlite3.Row]:
+        """Documents by id prefix, exact URL, URL suffix or exact title (first criterion given)."""
+        if idPrefix:
+            where, arg = "id LIKE ?", idPrefix.lower() + "%"
+        elif url:
+            where, arg = "canonicalUrl = ?", url
+        elif urlSuffix:
+            where, arg = "canonicalUrl LIKE ?", "%" + urlSuffix
+        else:
+            where, arg = "title = ?", title
+        with self._connectIndex() as conn:
+            return conn.execute(
+                f"SELECT * FROM documents WHERE namespaceId=? AND {where} ORDER BY createdAt DESC LIMIT 20",
+                (namespaceId, arg),
+            ).fetchall()
+
+    def renameCollection(self, namespaceId: str, old: str, new: str) -> int:
+        with self._connectIndex() as conn:
+            n = conn.execute("UPDATE documents SET collectionId=? WHERE namespaceId=? AND collectionId=?",
+                             (new, namespaceId, old)).rowcount
+            for table in ("segments", "sources"):
+                conn.execute(f"UPDATE {table} SET collectionId=? WHERE namespaceId=? AND collectionId=?",
+                             (new, namespaceId, old))
+            conn.commit()
+            return n
+
+    def deleteDocumentFully(self, documentId: str) -> None:
+        """A document with its segments and keyword rows (vault notes built from it stay)."""
+        self.replaceDocumentSegments(documentId)
+        with self._connectIndex() as conn:
+            conn.execute("DELETE FROM documents WHERE id=?", (documentId,))
+            conn.commit()
+
     def mergeDocumentMeta(self, documentId: str, extra: dict) -> None:
         with self._connectIndex() as conn:
             row = conn.execute("SELECT metadata FROM documents WHERE id=?", (documentId,)).fetchone()

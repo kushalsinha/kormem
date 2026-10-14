@@ -564,8 +564,9 @@ class SqliteStore(MemoryTablesMixin):
             return []
         q = q / qNorm
 
-        sql = "SELECT * FROM segments WHERE namespaceId=? AND embedding IS NOT NULL"
-        params: List[Any] = [namespaceId]
+        # Vectors from another model size can't be compared (e.g. after switching embedders).
+        sql = "SELECT * FROM segments WHERE namespaceId=? AND embedding IS NOT NULL AND embeddingDim=?"
+        params: List[Any] = [namespaceId, len(q)]
         if collectionId:
             sql += " AND collectionId=?"
             params.append(collectionId)
@@ -596,25 +597,24 @@ class SqliteStore(MemoryTablesMixin):
         collectionId: Optional[str] = None,
         kind: Optional[str] = None,
     ) -> List[Tuple[str, float]]:
-        from kormem.core.keywords import hashKeywords
-        hashes = hashKeywords(query)
-        if not hashes:
+        from kormem.core.keywords import queryKeywordGroups
+        groups = queryKeywordGroups(query)
+        if not groups:
             return []
         scores: dict[str, float] = {}
         with self._connectIndex() as conn:
-            for h in hashes:
+            for group in groups:
+                # One query word and its plural / tense forms; a chunk scores once per word.
                 sql = """
                     SELECT s.segmentKey, s.kind FROM segments_fts f
                     JOIN segments s ON s.segmentKey = f.segmentKey
                     WHERE segments_fts MATCH ? AND s.namespaceId = ?
                 """
-                params: List[Any] = [f'keywordHash:"{h}"', namespaceId]
+                params: List[Any] = [" OR ".join(f'keywordHash:"{h}"' for h in group), namespaceId]
                 if kind:
                     sql += " AND s.kind=?"
                     params.append(kind)
-                cur = conn.execute(sql, params)
-                for row in cur.fetchall():
-                    key = row["segmentKey"]
+                for key in {row["segmentKey"] for row in conn.execute(sql, params).fetchall()}:
                     scores[key] = scores.get(key, 0.0) + 1.0
         ranked = sorted(scores.items(), key=lambda x: -x[1])[:limit]
         return ranked

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -42,6 +43,84 @@ def getGuidancePath(home: Optional[Path] = None) -> Path:
 
 def getConfigPath(home: Optional[Path] = None) -> Path:
     return (home or getKormemHome()) / "config.yaml"
+
+
+def getEnvPath(home: Optional[Path] = None) -> Path:
+    raw = os.environ.get("KORMEM_ENV_FILE", "").strip()
+    if raw and home is None:
+        return Path(raw).expanduser()
+    return (home or getKormemHome()) / ".env"
+
+
+# API keys kormem uses. Their presence decides which services run.
+API_KEYS = ("GEMINI_API_KEY", "OPENAI_API_KEY", "FIRECRAWL_API_KEY")
+
+ENV_TEMPLATE = """\
+# kormem API keys. Variables already set in the environment win.
+# Every key is optional: kormem runs fully local without them, with less.
+
+# Embeddings (gemini-embedding-2) and extraction into the vault.
+# Without it: local embeddings (BAAI/bge-base-en-v1.5), extraction uses OpenAI.
+GEMINI_API_KEY=
+
+# The recall agent behind `kormem query`, and extraction.
+# Without it: query returns ranked notes and sources, no agent findings.
+OPENAI_API_KEY=
+
+# Optional: better page text for `kormem ingest <url>`.
+FIRECRAWL_API_KEY=
+"""
+
+
+def parseEnvFile(path: Path) -> dict[str, str]:
+    """``KEY=value`` lines (spaces around ``=``, quotes and ``export`` allowed); empty values skipped."""
+    values: dict[str, str] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return values
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip().removeprefix("export ").strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        elif " #" in value:
+            value = value.split(" #", 1)[0].rstrip()
+        if key and value:
+            values[key] = value
+    return values
+
+
+def loadEnvFile(home: Optional[Path] = None) -> list[str]:
+    """Load ``~/.kormem/.env`` (or ``KORMEM_ENV_FILE``) into ``os.environ``; set variables win.
+
+    Returns the names it set.
+    """
+    loaded = []
+    for key, value in parseEnvFile(getEnvPath(home)).items():
+        if not os.environ.get(key):
+            os.environ[key] = value
+            loaded.append(key)
+    return loaded
+
+
+def writeEnvTemplate(home: Optional[Path] = None) -> tuple[Path, bool]:
+    """Create the env file with empty keys (owner-only) unless it exists. Returns (path, created)."""
+    path = getEnvPath(home)
+    if path.exists():
+        return path, False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(ENV_TEMPLATE, encoding="utf-8")
+    path.chmod(0o600)
+    return path, True
+
+
+def apiKeysSet() -> list[str]:
+    return [k for k in API_KEYS if os.environ.get(k)]
 
 
 @dataclass
@@ -177,13 +256,57 @@ class KormemConfig:
         }
 
 
-def loadConfig(home: Optional[Path] = None) -> KormemConfig:
+def loadConfig(home: Optional[Path] = None, pinned: bool = True) -> KormemConfig:
+    """``pinned``: use the embedding provider the index was built with (see :func:`pinEmbeddingProvider`)."""
     path = getConfigPath(home)
+    data: dict[str, Any] = {}
+    if path.exists():
+        with path.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    config = KormemConfig.fromDict(data)  # also reads API keys and settings from the environment
+    pin = getEmbeddingPinPath(home)
+    if pinned and pin.exists():
+        config.embeddingProvider = pin.read_text(encoding="utf-8").strip() or config.embeddingProvider
+    return config
+
+
+def getEmbeddingPinPath(home: Optional[Path] = None) -> Path:
+    return (home or getKormemHome()) / "embedding-provider"
+
+
+def selectedEmbeddingProvider(config: KormemConfig) -> str:
+    """The provider the config and keys select: the configured one, Gemini falling back to local."""
+    name = (config.embeddingProvider or "gemini").lower()
+    if name in ("local", "hash"):
+        return name
+    return "gemini" if config.geminiApiKey else "local"
+
+
+def _indexHasVectors(home: Optional[Path] = None) -> bool:
+    path = getIndexPath(home)
     if not path.exists():
-        return KormemConfig()
-    with path.open("r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    return KormemConfig.fromDict(data)
+        return False
+    try:
+        with sqlite3.connect(path) as conn:
+            return conn.execute("SELECT 1 FROM segments WHERE embedding IS NOT NULL LIMIT 1").fetchone() is not None
+    except sqlite3.Error:
+        return False
+
+
+def pinEmbeddingProvider(home: Optional[Path] = None) -> tuple[str, str]:
+    """Keep the index on the embeddings it was built with. Returns (pinned, selected).
+
+    Vectors from different models can't be compared, so once the index holds
+    vectors, adding or removing GEMINI_API_KEY doesn't switch providers. While
+    the index is empty the pin follows the keys.
+    """
+    selected = selectedEmbeddingProvider(loadConfig(home, pinned=False))
+    pin = getEmbeddingPinPath(home)
+    if pin.exists() and _indexHasVectors(home):
+        return pin.read_text(encoding="utf-8").strip() or selected, selected
+    pin.parent.mkdir(parents=True, exist_ok=True)
+    pin.write_text(selected + "\n", encoding="utf-8")
+    return selected, selected
 
 
 def saveConfig(config: KormemConfig, home: Optional[Path] = None) -> Path:
@@ -195,10 +318,30 @@ def saveConfig(config: KormemConfig, home: Optional[Path] = None) -> Path:
     return path
 
 
+def readRawConfig(home: Optional[Path] = None) -> dict[str, Any]:
+    """config.yaml as written, keeping keys :class:`KormemConfig` does not model."""
+    path = getConfigPath(home)
+    if not path.exists():
+        return KormemConfig().toDict()
+    with path.open("r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def writeRawConfig(data: dict[str, Any], home: Optional[Path] = None) -> Path:
+    home = home or getKormemHome()
+    home.mkdir(parents=True, exist_ok=True)
+    path = getConfigPath(home)
+    with path.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    return path
+
+
 def ensureKormemLayout(home: Optional[Path] = None) -> Path:
     home = home or getKormemHome()
     for sub in ("queue", "models", "logs", "vault"):
         (home / sub).mkdir(parents=True, exist_ok=True)
     if not getConfigPath(home).exists():
         saveConfig(KormemConfig(), home)
+    if not os.environ.get("KORMEM_ENV_FILE"):
+        writeEnvTemplate(home)
     return home

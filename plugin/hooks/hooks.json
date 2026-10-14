@@ -1,0 +1,7 @@
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "kormem hook", "timeout": 30 }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "kormem hook", "timeout": 30 }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "kormem hook", "timeout": 30 }] }]
+  }
+}

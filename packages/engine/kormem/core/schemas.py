@@ -208,3 +208,39 @@ class StatusResponse(BaseModel):
     pendingJobs: int
     pendingExtractions: int = 0
     engineVersion: str
+
+
+class CollectionAddRequest(BaseModel):
+    name: str
+    path: str
+    pattern: str = "**/*"
+    namespaceId: str = "main"
+
+
+class CollectionRequest(BaseModel):
+    name: str
+    newName: Optional[str] = None      # rename only
+    namespaceId: str = "main"
+
+
+class UpdateRequest(BaseModel):
+    namespaceId: str = "main"
+    name: Optional[str] = None          # one collection; None = all
+    prune: bool = True                  # drop sources whose files were deleted
+
+
+class ContextEditRequest(BaseModel):
+    path: str = ""                      # "/", kormem://…, a collection, or a folder on disk
+    text: str = ""
+    cwd: str = ""
+
+
+class GetRequest(BaseModel):
+    ref: str
+    namespaceId: str = "main"
+
+
+class MultiGetRequest(BaseModel):
+    pattern: str
+    maxBytes: int = 65_536
+    namespaceId: str = "main"

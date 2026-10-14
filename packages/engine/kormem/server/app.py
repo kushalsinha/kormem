@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any, Optional
@@ -14,9 +15,19 @@ from fastapi import FastAPI, HTTPException
 
 from kormem import __version__
 from kormem.connectors.service import ConnectorService
-from kormem.core.config import ensureKormemLayout, getKormemHome, loadConfig
+from kormem.core.config import (
+    apiKeysSet, ensureKormemLayout, getKormemHome, loadConfig, loadEnvFile, pinEmbeddingProvider,
+    selectedEmbeddingProvider,
+)
+from kormem import library
 from kormem.core.schemas import (
+    CollectionAddRequest,
+    CollectionRequest,
+    ContextEditRequest,
     ContextRequest,
+    GetRequest,
+    MultiGetRequest,
+    UpdateRequest,
     DocumentReadRequest,
     ChatAppendRequest,
     ChatCloseRequest,
@@ -55,6 +66,11 @@ MAINTAIN_HOURS = float(os.environ.get("KORMEM_MAINTAIN_HOURS", "24"))
 
 
 def createApp() -> FastAPI:
+    loadEnvFile()
+    ensureKormemLayout()
+    pinned, selected = pinEmbeddingProvider()
+    if pinned != selected:
+        logger.warning("the index was built with %s embeddings; keeping them (keys select %s)", pinned, selected)
     config = loadConfig()
     ingest = IngestService(config=config)
     rag = RagService(config=config)
@@ -93,6 +109,8 @@ def createApp() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        ingest.store.ensureNamespace(config.defaultNamespace)
+        VaultStore(store=ingest.store, config=config, namespaceId=config.defaultNamespace).ensureMetaNotes()
         requeued = ingest.store.requeueStaleExtractions()
         if requeued:
             logger.info("requeued %d extraction jobs left in progress", requeued)
@@ -107,8 +125,8 @@ def createApp() -> FastAPI:
     recallPipeline = RecallPipeline(store=ingest.store, config=config)
 
     @app.get("/health")
-    async def health() -> dict[str, str]:
-        return {"status": "ok", "version": __version__}
+    async def health() -> dict[str, Any]:
+        return {"status": "ok", "version": __version__, "keys": apiKeysSet()}
 
     @app.get("/status")
     async def status(namespaceId: Optional[str] = None) -> StatusResponse:
@@ -236,12 +254,23 @@ def createApp() -> FastAPI:
         """Notes, sources and findings for a question: free first pass, then the recall agent."""
         ctx = await recallPipeline.recall(req.query, req.namespaceId, req.queryDate, req.effort)
         vault = VaultStore(store=ingest.store, config=config, namespaceId=req.namespaceId)
+        cols, contexts = library.collections(), library.contexts()
+        for s in ctx.sources:
+            doc = ingest.store.getDocument(s.get("documentId") or "")
+            if doc is not None:
+                s["uri"] = library.documentUri(doc, cols)
+                s["docid"] = library.docid(doc["id"])
+                s["context"] = library.contextFor(s["uri"], contexts)
+        # Findings cite per-recall ids (S12); swap in docids, which `get` can open later.
+        sidToDocid = {s["sid"]: s["docid"] for s in ctx.sources if s.get("docid")}
+        findings = [re.sub(r"\bS(\d+)\b", lambda m: sidToDocid.get(m.group(0), m.group(0)), f)
+                    for f in ctx.findings]
         return {
             "relevantMemory": ctx.relevantMemory,
             "lessons": lessonsFor(vault, req.project),
             "notes": ctx.notes,
             "sources": ctx.sources,
-            "findings": ctx.findings,
+            "findings": findings,
             "debug": ctx.debug,
         }
 
@@ -266,6 +295,12 @@ def createApp() -> FastAPI:
                 f"Config embeddingDim={config.embeddingDim} but index has dims {storedDims}. "
                 "Run `kormem embed -f` to re-embed."
             )
+        selected = selectedEmbeddingProvider(loadConfig(pinned=False))
+        if storedDims and active["provider"] != selected:
+            warnings.append(
+                f"The index was built with {active['provider']} embeddings and stays on them "
+                f"(your keys now select {selected}): vectors from different models can't be mixed."
+            )
         if storedDims and len(storedDims) > 1:
             warnings.append(f"Mixed embedding dimensions in index: {storedDims}")
         return {
@@ -278,7 +313,21 @@ def createApp() -> FastAPI:
 
     @app.post("/search", response_model=SearchResponse)
     async def search(req: SearchRequest) -> SearchResponse:
-        return await rag.search(req)
+        res = await rag.search(req)
+        cols, ctx = library.collections(), library.contexts()
+        docs: dict[str, Any] = {}
+        for k in res.knowledge:
+            if not k.documentId:
+                continue
+            if k.documentId not in docs:
+                docs[k.documentId] = ingest.store.getDocument(k.documentId)
+            doc = docs[k.documentId]
+            if doc is None:
+                continue
+            uri = library.documentUri(doc, cols)
+            k.metadata.update({"docid": library.docid(doc["id"]), "uri": uri,
+                               "context": library.contextFor(uri, ctx)})
+        return res
 
     @app.post("/notes/read")
     async def readNote(req: NoteReadRequest) -> dict[str, Any]:
@@ -335,6 +384,100 @@ def createApp() -> FastAPI:
             "canonicalUrl": doc["canonicalUrl"],
             "text": text,
         }
+
+    # --------------------------------------------- collections, contexts, addresses
+
+    def _vault(namespaceId: str) -> VaultStore:
+        return VaultStore(store=ingest.store, config=config, namespaceId=namespaceId)
+
+    def _refError(e: library.RefError) -> HTTPException:
+        return HTTPException(status_code=404, detail={"error": str(e), "suggestions": e.suggestions})
+
+    @app.get("/collections")
+    async def collectionList(namespaceId: str = "main") -> list[dict[str, Any]]:
+        return library.listing(ingest.store, _vault(namespaceId), namespaceId)["collections"]
+
+    @app.post("/collections/add")
+    async def collectionAdd(req: CollectionAddRequest) -> dict[str, Any]:
+        """Register a folder and index it; later `update` calls only touch changed files."""
+        try:
+            entry = library.addCollection(req.name, req.path, req.pattern)
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        stats = await library.syncCollection(ingest, req.namespaceId, req.name, entry["path"], entry["pattern"])
+        return {"name": req.name, **entry, **stats}
+
+    @app.post("/collections/remove")
+    async def collectionRemove(req: CollectionRequest) -> dict[str, Any]:
+        removed = library.removeCollection(ingest.store, req.namespaceId, req.name)
+        return {"name": req.name, "removedDocuments": removed}
+
+    @app.post("/collections/rename")
+    async def collectionRename(req: CollectionRequest) -> dict[str, Any]:
+        try:
+            n = library.renameCollection(ingest.store, req.namespaceId, req.name, req.newName or "")
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"No collection named {req.name!r}")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"name": req.newName, "documents": n}
+
+    @app.post("/update")
+    async def update(req: UpdateRequest) -> dict[str, Any]:
+        """Re-index collections: new files are added, changed ones re-indexed, deleted ones dropped."""
+        cols = library.collections()
+        if req.name and req.name not in cols:
+            raise HTTPException(status_code=404, detail=f"No collection named {req.name!r}")
+        out = {}
+        for name, c in cols.items():
+            if req.name and name != req.name:
+                continue
+            out[name] = await library.syncCollection(ingest, req.namespaceId, name, c["path"], c["pattern"],
+                                                     prune=req.prune)
+        return {"collections": out}
+
+    @app.get("/contexts")
+    async def contextList() -> dict[str, str]:
+        return library.contexts()
+
+    @app.post("/contexts/add")
+    async def contextAdd(req: ContextEditRequest) -> dict[str, str]:
+        try:
+            return {"path": library.addContext(req.path, req.text, req.cwd), "text": req.text}
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.post("/contexts/remove")
+    async def contextRemove(req: ContextEditRequest) -> dict[str, Any]:
+        try:
+            return {"removed": library.removeContext(req.path, req.cwd)}
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.post("/get")
+    async def get(req: GetRequest) -> dict[str, Any]:
+        """A note or source by address, #docid, title, alias or path."""
+        try:
+            return library.resolve(ingest.store, _vault(req.namespaceId), req.namespaceId, req.ref,
+                                   config.encryptionKey)
+        except library.RefError as e:
+            raise _refError(e)
+
+    @app.post("/multi-get")
+    async def multiGet(req: MultiGetRequest) -> list[dict[str, Any]]:
+        return library.multiGet(ingest.store, _vault(req.namespaceId), req.namespaceId, req.pattern,
+                                req.maxBytes, config.encryptionKey)
+
+    @app.get("/ls")
+    async def ls(namespaceId: str = "main", path: str = "") -> dict[str, Any]:
+        return library.listing(ingest.store, _vault(namespaceId), namespaceId, path)
+
+    @app.post("/shutdown")
+    async def shutdown() -> dict[str, str]:
+        """Stop the engine (the CLI restarts it on the next command, e.g. after an upgrade)."""
+        import signal
+        asyncio.get_running_loop().call_later(0.2, os.kill, os.getpid(), signal.SIGTERM)
+        return {"status": "stopping"}
 
     @app.post("/worker/tick")
     async def workerTick() -> dict[str, int]:

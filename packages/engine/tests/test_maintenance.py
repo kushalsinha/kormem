@@ -230,5 +230,16 @@ def testLegacyKeywordRowsFoldOnceAndStillMatch(tmp_path, monkeypatch):
         segRowid = conn.execute("SELECT rowid FROM segments WHERE segmentKey='k1'").fetchone()[0]
     assert [(r[0], r[1]) for r in rows] == [(segRowid, "k1")]
     from kormem.core import keywords
-    monkeypatch.setattr(keywords, "hashKeywords", lambda q: ["aaa111", "bbb222"])
+    monkeypatch.setattr(keywords, "queryKeywordGroups", lambda q: [["aaa111"], ["bbb222", "zzz999"]])
     assert store.keywordSearch("t", "anything") == [("k1", 2.0)]
+
+
+def testKeywordSearchMatchesPluralAndTenseForms(tmp_path, monkeypatch):
+    monkeypatch.setenv("KORMEM_HOME", str(tmp_path))
+    from kormem.core.keywords import hashKeywords
+    store = SqliteStore(indexPath=tmp_path / "i.sqlite", guidancePath=tmp_path / "g.sqlite")
+    store.upsertSegments("t", "d1", "s1", [{"segmentKey": "k1", "segmentIndex": 0, "plainText": "x",
+                                            "keywordHashes": hashKeywords("Rollbacks deployed nightly")}])
+    assert store.keywordSearch("t", "rollback deploy") == [("k1", 2.0)]
+    assert store.keywordSearch("t", "rollbacks rollback") == [("k1", 2.0)]
+    assert store.keywordSearch("t", "unrelated") == []

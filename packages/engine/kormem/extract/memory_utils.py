@@ -388,7 +388,7 @@ _DATE_HEADER_RE = re.compile(r"^Date:\s*\d{4}-\d{2}-\d{2}")
 _USER_LINE_RE = re.compile(r"^\[user\]\s*:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 _ROLE_LINE_RE = re.compile(r"^\[(user|assistant)\]\s*:", re.IGNORECASE | re.MULTILINE)
 
-# Session date header as inserted by the benchmark ingest helper
+# Session date header some chat exports put above a conversation
 # Matches: [Session date: 2023/05/20 (Sat) 21:44]
 _SESSION_DATE_HEADER_RE = re.compile(r"\[Session date:\s*(\d{4}/\d{2}/\d{2}[^\]]*)\]", re.IGNORECASE)
 
@@ -410,8 +410,8 @@ _ASSISTANT_LINE_RE = re.compile(r"^\[assistant\]\s*:\s*(.+)$", re.IGNORECASE | r
 def extract_user_text(text: str, include_assistant_context: bool = False) -> str:
     """Return user-side content from conversation-formatted text.
 
-    If the text contains ``[user]:`` / ``[assistant]:`` markers (LongMemEval
-    ingestion format), only ``[user]:`` segments are returned joined by
+    If the text contains ``[user]:`` / ``[assistant]:`` markers (the chat
+    transcript format), only ``[user]:`` segments are returned joined by
     ``---`` separators.  For plain documents (no role markers), the full text
     is returned unchanged so non-conversation uploads are still processed.
 
@@ -881,7 +881,7 @@ _FUTURE_INTENT_RE = re.compile(
 def _parse_reference_date(reference_date: str) -> Optional[datetime]:
     """Parse a reference_date string.
 
-    Accepts ISO ``YYYY-MM-DD`` plus LongMemEval's ``YYYY/MM/DD (Day) HH:MM``.
+    Accepts ISO ``YYYY-MM-DD`` plus ``YYYY/MM/DD (Day) HH:MM`` (the session date header format).
     Returns a naive datetime at midnight of the picked date, or ``None`` if
     unparseable.
     """

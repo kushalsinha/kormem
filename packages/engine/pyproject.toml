@@ -3,11 +3,23 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "kormem-engine"
-version = "0.1.0"
-description = "Local memory engine for kormem"
+name = "kormem"
+dynamic = ["version"]
+description = "Local memory for AI agents: index, linked vault and recall agent. QMD-compatible commands."
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Kushal Sinha" }]
+keywords = ["memory", "agents", "llm", "mcp", "claude-code", "rag", "obsidian", "qmd"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
   "fastapi>=0.115.0",
   "uvicorn[standard]>=0.32.0",
@@ -21,16 +33,31 @@ dependencies = [
   "python-docx>=1.1.0",
   "google-genai>=1.0.0",
   "fastembed>=0.4.0",
+  "cryptography>=42.0.0",
+  "mcp>=1.10.0",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0", "pytest-asyncio>=0.24.0"]
 
+[project.urls]
+Homepage = "https://github.com/kushalsinha/kormem"
+Repository = "https://github.com/kushalsinha/kormem"
+Issues = "https://github.com/kushalsinha/kormem/issues"
+
 [project.scripts]
+kormem = "kormem.cli:main"
 kormem-engine = "kormem.cli:main"
+
+[tool.hatch.version]
+path = "kormem/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["kormem"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/kormem", "/tests", "/README.md", "/LICENSE", "/pyproject.toml"]
+exclude = ["__pycache__"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -66,6 +66,7 @@ class ExtractionUnit:
     project: str = ""               # project the source came from (e.g. a repo), for lesson scope
     sourceNote: Optional[str] = None  # existing _sources note to extend (chat stretches)
     span: str = ""                  # e.g. "turns 12–31"
+    context: str = ""               # user's description of the collection / folder it came from
 
 
 @dataclass
@@ -194,6 +195,7 @@ class VaultLinker:
             f"Source: {unit.title} ({unit.kind}{', ' + unit.span if unit.span else ''})\n"
             f"Source date: {unit.date}\n"
             + (f"Project: {unit.project}\n" if unit.project else "")
+            + (f"What the user says this collection holds: {unit.context}\n" if unit.context else "")
             + "\n"
             f"Folders you may use:\n" + "\n".join(f"- {f}" for f in folders) + "\n\n"
             f"Shortlisted existing notes:\n" + ("\n\n".join(noteBlocks) or "(none yet)") + "\n\n"

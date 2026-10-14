@@ -5,6 +5,22 @@ Kormem plugs into Claude Code in two places:
 - **Hooks** send every conversation into memory. Each turn is indexed immediately. Once a session goes quiet (30 minutes idle) or ends, kormem extracts it into the vault: what you said, what the assistant suggested, decisions you made, and **lessons** (instructions and corrections such as "use bun, not npm"). At the start of every session, the hook loads your lessons into Claude's context.
 - **MCP tools** let Claude recall that memory while it works.
 
+## Plugin (recommended)
+
+```bash
+npm install -g kormem          # or: pip install kormem
+kormem init                    # installs the plugin when the claude CLI is found
+```
+
+Or install the plugin yourself:
+
+```bash
+claude plugin marketplace add kushalsinha/kormem
+claude plugin install kormem@kormem
+```
+
+API keys go in `~/.kormem/.env`, so the hooks and the MCP server see them however Claude Code was started. The plugin adds the MCP server, the three hooks below and a `kormem` skill that tells Claude when to recall and how to open sources. To set things up by hand instead, use the two sections below.
+
 ## 1. Hooks: remember your sessions
 
 Add to `~/.claude/settings.json`:
@@ -45,19 +61,21 @@ Claude Desktop: add the same server to `~/Library/Application Support/Claude/cla
 
 | Tool | What it does |
 |---|---|
-| `recall` | Findings with dates, the topic notes and the source chats or documents behind them. A recall agent walks the vault's links; `deep: true` spends more effort on counting and timeline questions. |
+| `query` | Findings with dates, the topic notes and the source chats or documents behind them (as `#docid`). A recall agent walks the vault's links; `deep: true` spends more effort on counting and timeline questions. |
+| `get` | Open a source by `#docid`, a note by title, or a file by `kormem://` address. `"#abc123:120:40"` reads lines 120–159. |
+| `multi_get` | Several notes or sources by glob or comma-separated list. |
+| `search` | Fast keyword or vector search over chunks, no agent. |
 | `lessons` | What you have told assistants to remember about working with you (global plus a project's). |
 | `remember` | Store a fact. Facts are batched and extracted a few minutes later. |
 | `ingest` | Add a file, folder or URL. It is indexed now and extracted in the background. |
-| `read_note`, `list_links`, `get_moc` | Read the vault directly: a note, its links and backlinks, and the map of content. |
-| `read_document` | Full text of a source document. |
-| `status` | Counts, including extraction jobs still queued. |
+| `status` | Counts, collections, and extraction jobs still queued. |
 
 ## CLI alternative
 
 ```bash
 kormem query "where did I redeem the creamer coupon?"   # recall: findings + notes + sources
-kormem search "coupon"                                   # raw keyword search over chunks
+kormem get "#abc123"                                     # open a source from those results
+kormem search "coupon"                                   # fast keyword search over chunks
 kormem extract --wait                                    # finish queued extraction now
 kormem maintain                                          # tidy memory now (also runs daily)
 ```

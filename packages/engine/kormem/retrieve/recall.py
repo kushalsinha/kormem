@@ -377,7 +377,7 @@ class RecallPipeline:
         return RecallContext(
             relevantMemory=relevantMemory,
             notes=notes,
-            sources=[{"sid": s.sid, "title": s.title, "kind": s.kind, "date": s.dateStr,
+            sources=[{"sid": s.sid, "documentId": s.documentId, "title": s.title, "kind": s.kind, "date": s.dateStr,
                       "text": resolveRelativeDates(self._text(s), s.date)} for s in picked],
             findings=findings,
             debug={"effort": effort, "nSources": len(sources), "shortlist": [s.sid for s in shortlist],

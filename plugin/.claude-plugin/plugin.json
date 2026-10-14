@@ -1,0 +1,10 @@
+{
+  "name": "kormem",
+  "version": "0.1.0",
+  "description": "Long-term memory for Claude Code: remembers every session, loads your lessons at start, and recalls past decisions, preferences and documents.",
+  "author": { "name": "Kushal Sinha" },
+  "homepage": "https://github.com/kushalsinha/kormem",
+  "repository": "https://github.com/kushalsinha/kormem",
+  "license": "MIT",
+  "keywords": ["memory", "recall", "lessons", "mcp", "qmd"]
+}

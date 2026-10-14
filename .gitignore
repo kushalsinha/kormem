@@ -7,6 +7,9 @@ __pycache__/
 .venv/
 venv/
 .env
+.env.*
+!.env.example
+*.swp
 .pytest_cache/
 .mypy_cache/
 *.egg-info/
@@ -15,3 +18,8 @@ packages/cli/*.tsbuildinfo
 
 # Benchmark run artifacts (published as release assets instead)
 packages/engine/benchmark/runs/
+
+# Release builds
+/dist/
+packages/cli/README.md
+packages/cli/LICENSE

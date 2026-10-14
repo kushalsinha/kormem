@@ -1,0 +1,678 @@
+"""``kormem`` commands. Names and flags follow QMD wherever the job is the same.
+
+QMD-compatible: collection, context, embed, update, search, vsearch, query,
+get, multi-get, ls, status, doctor, cleanup, init, mcp.
+Memory: remember, lessons, chat, hook, extract, maintain, notes, ingest.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import platform
+import sys
+from typing import Any, Dict, List, Optional
+
+from kormem import __version__
+from kormem.cli import output as out
+from kormem.cli.client import Engine, EngineError, baseUrl, kormemHome, logPath
+from kormem.core.config import API_KEYS, getEnvPath, loadEnvFile, writeEnvTemplate
+
+QUICK_HELP = """\
+Quick start:
+  kormem init                                     set up keys, the engine and Claude Code (run once)
+  kormem collection add ~/notes --name notes      index a folder (only changed files on `kormem update`)
+  kormem context add kormem://notes "Personal notes and ideas"
+  kormem search "project timeline"                fast keyword search
+  kormem vsearch "how to deploy"                  semantic search
+  kormem query "what did we decide about X?"      recall agent: walks notes + sources (best quality)
+  kormem get "#abc123"                             a source by docid, or a note / file by name or path
+  kormem remember "I prefer pnpm over npm"        a fact, filed into the vault in the background
+  kormem mcp                                      MCP server for Claude Code, Claude Desktop, Cursor
+
+Run `kormem <command> -h` for options.
+"""
+
+
+def _engine(args) -> Engine:
+    return Engine(args.namespace)
+
+
+def _fmt(args) -> str:
+    for f in ("json", "csv", "md", "xml", "files"):
+        if getattr(args, f"as_{f}", False):
+            return f
+    return getattr(args, "format", None) or "cli"
+
+
+def _limit(args, fmt: str) -> int:
+    if getattr(args, "all", False):
+        return 1000
+    return args.n or (20 if fmt in ("json", "files") else 5)
+
+
+# ------------------------------------------------------------------ setup
+
+
+MARKETPLACE = "kushalsinha/kormem"
+
+
+def _claudeCode() -> str:
+    """Install the Claude Code plugin (MCP server, session hooks, skill); fall back to the MCP server alone."""
+    import json
+    import shutil
+    import subprocess
+
+    claude = shutil.which("claude")
+    if not claude:
+        return "not found, skipped"
+
+    def run(*cmd: str) -> subprocess.CompletedProcess:
+        return subprocess.run([claude, *cmd], capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
+
+    try:
+        listed = run("plugin", "list", "--json")
+        if listed.returncode == 0 and any(str(p.get("id", "")).startswith("kormem@")
+                                          for p in json.loads(listed.stdout or "[]")):
+            return "plugin already installed"
+        run("plugin", "marketplace", "add", MARKETPLACE, "--sparse", ".claude-plugin", "plugin")
+        if run("plugin", "install", "kormem@kormem").returncode == 0:
+            return "plugin installed: MCP server, session hooks, recall skill (restart Claude Code)"
+        cmd = ["kormem", "mcp"] if shutil.which("kormem") else [sys.executable, "-m", "kormem.cli", "mcp"]
+        if run("mcp", "add", "--scope", "user", "kormem", "--", *cmd).returncode == 0:
+            return "plugin install failed; added the MCP server only (sessions are not remembered without the hooks)"
+        return "setup failed; see README > Claude Code"
+    except (OSError, ValueError, subprocess.SubprocessError) as err:
+        return f"setup failed ({err}); see README > Claude Code"
+
+
+def cmdInit(args) -> None:
+    """Set up everything a new user needs: data folder, key file, engine and Claude Code."""
+    envPath = getEnvPath()
+    if not os.environ.get("KORMEM_ENV_FILE"):
+        envPath, created = writeEnvTemplate()
+        if created:
+            print(f"keys          created {envPath}: add your API keys there")
+    e = _engine(args)
+    r = e.post("/init", {"namespaceId": args.namespace})
+    print(f"home          {r['home']} (namespace {r['namespaceId']})")
+    keys = [k for k in API_KEYS if os.environ.get(k)]
+    print(f"api keys      {', '.join(keys) if keys else 'none yet'} (from the environment or {envPath})")
+    emb = e.get("/embeddings/status")
+    print(f"engine        running at {baseUrl()}, log {logPath()}")
+    print(f"embeddings    {emb['provider']} / {emb['model']}")
+    extraction = "on" if {"GEMINI_API_KEY", "OPENAI_API_KEY"} & set(keys) else "waiting for GEMINI_API_KEY or OPENAI_API_KEY"
+    print(f"extraction    {extraction} (files chats, notes and facts into the vault in the background)")
+    print(f"recall agent  {'on' if 'OPENAI_API_KEY' in keys else 'waiting for OPENAI_API_KEY'}")
+    hours = float(os.environ.get("KORMEM_MAINTAIN_HOURS", "24"))
+    print(f"maintenance   {f'on (merges, condenses and archives notes every {hours:g} h)' if hours > 0 else 'only on request'}")
+    if not args.skip_agents:
+        print(f"claude code   {_claudeCode()}")
+    if not keys:
+        print(f"\nAdd keys to {envPath}; the next kormem command restarts the engine with them.")
+    print("\nNext: kormem collection add <folder> --name <name>, then kormem query \"...\"")
+
+
+def cmdCollection(args) -> None:
+    e = _engine(args)
+    sub = args.sub
+    if sub == "add":
+        name = args.name or os.path.basename(os.path.abspath(os.path.expanduser(args.path))) or "files"
+        print(f"Indexing {args.path} as '{name}'…", file=sys.stderr)
+        r = e.post("/collections/add", {"name": name, "path": args.path, "pattern": args.mask,
+                                        "namespaceId": args.namespace})
+        print(f"Collection '{name}' → {r['path']} ({r['pattern']}): {r['added']} added, "
+              f"{r['updated']} updated, {r['unchanged']} unchanged.")
+        print("Extraction into the vault runs in the background (kormem status shows the queue).")
+    elif sub in ("list", "ls"):
+        rows = e.get("/collections", namespaceId=args.namespace)
+        if args.json:
+            return out.printJson(rows)
+        if not rows:
+            print("No collections. Add one: kormem collection add <folder> --name <name>")
+        for c in rows:
+            print(f"{out.bold(c['name'])}  {c['path']}  {out.dim(c['pattern'])}  {c['documents']} files")
+            if c.get("context"):
+                print(out.dim(f"  Context: {c['context']}"))
+    elif sub in ("remove", "rm"):
+        r = e.post("/collections/remove", {"name": args.name, "namespaceId": args.namespace})
+        print(f"Removed '{args.name}' ({r['removedDocuments']} files). Vault notes built from it stay.")
+    elif sub in ("rename", "mv"):
+        r = e.post("/collections/rename", {"name": args.old, "newName": args.new, "namespaceId": args.namespace})
+        print(f"Renamed '{args.old}' → '{args.new}' ({r['documents']} files).")
+    elif sub == "show":
+        rows = {c["name"]: c for c in e.get("/collections", namespaceId=args.namespace)}
+        c = rows.get(args.name)
+        if not c:
+            raise EngineError(f"No collection named {args.name!r}")
+        if args.json:
+            return out.printJson(c)
+        for k in ("name", "uri", "path", "pattern", "documents", "context"):
+            print(f"{k:10} {c.get(k) or ''}")
+
+
+def cmdContext(args) -> None:
+    e = _engine(args)
+    if args.sub == "add":
+        path, text = (args.items[0], args.items[1]) if len(args.items) >= 2 else ("", args.items[0])
+        r = e.post("/contexts/add", {"path": path, "text": text, "cwd": os.getcwd()})
+        print(f"Context for {r['path']}: {r['text']}")
+    elif args.sub in ("list", "ls"):
+        ctx = e.get("/contexts")
+        if args.json:
+            return out.printJson(ctx)
+        if not ctx:
+            print('No contexts. Add one: kormem context add kormem://notes "Personal notes and ideas"')
+        for k, v in ctx.items():
+            print(f"{out.bold(k)}  {v}")
+    elif args.sub in ("rm", "remove"):
+        r = e.post("/contexts/remove", {"path": args.path, "cwd": os.getcwd()})
+        print("Removed." if r["removed"] else "No context there.")
+
+
+def cmdIngest(args) -> None:
+    e = _engine(args)
+    t = args.target
+    if t.startswith(("http://", "https://")):
+        r = e.post("/ingest/url", {"url": t, "namespaceId": args.namespace, "collectionId": args.collection})
+        print(f"Indexed {t} as {r.get('documentId', '')[:8]} ({r.get('segmentCount', 0)} chunks).")
+    else:
+        rows = e.post("/ingest/path", {"path": t, "namespaceId": args.namespace,
+                                       "collectionId": args.collection, "recursive": True})
+        print(f"Indexed {len(rows)} file(s). For a folder you keep editing, `kormem collection add` "
+              "re-indexes only what changed on `kormem update`.")
+    print("Extraction into the vault runs in the background.")
+
+
+def cmdUpdate(args) -> None:
+    r = _engine(args).post("/update", {"namespaceId": args.namespace, "name": args.name, "prune": not args.no_prune})
+    if args.json:
+        return out.printJson(r)
+    if not r["collections"]:
+        print("No collections to update.")
+    for name, s in r["collections"].items():
+        print(f"{name}: {s['added']} added, {s['updated']} updated, {s['removed']} removed, "
+              f"{s['unchanged']} unchanged" + (f", {s['failed']} unreadable" if s["failed"] else ""))
+
+
+def cmdEmbed(args) -> None:
+    r = _engine(args).post("/embed", None, namespaceId=args.namespace, force=str(bool(args.force)).lower())
+    print(f"Embedded {r['embedded']} chunks{' (forced re-embed)' if args.force else ''}.")
+
+
+# ----------------------------------------------------------------- search
+
+
+def _searchItems(r: Dict[str, Any], limit: int, minScore: float) -> List[Dict[str, Any]]:
+    """One result per source (its best chunk), like QMD's per-document results."""
+    seen, items = set(), []
+    for k in r.get("knowledge", []):
+        md = k.get("metadata") or {}
+        key = md.get("docid") or k.get("documentId") or k["segmentKey"]
+        if key in seen or k.get("score", 0) < minScore:
+            continue
+        seen.add(key)
+        items.append({"docid": md.get("docid", ""), "uri": md.get("uri"),
+                      "title": k.get("sourceTitle") or md.get("sourceTitle") or "",
+                      "score": k.get("score", 0.0), "context": md.get("context", ""),
+                      "date": md.get("sourceDate", ""), "text": k.get("text", "")})
+        if len(items) >= limit:
+            break
+    return items
+
+
+def cmdSearch(args) -> None:
+    fmt = _fmt(args)
+    limit = _limit(args, fmt)
+    e = _engine(args)
+    mode = "keyword" if args.command == "search" else "vector"
+    r = e.post("/search", {"query": args.query, "namespaceId": args.namespace, "mode": mode,
+                           "limit": limit * 3, "collectionId": args.collection, "minScore": args.min_score,
+                           "includeGuidance": False, "rerank": False if args.no_rerank else None})
+    items = _searchItems(r, limit, args.min_score)
+    if args.full:
+        for it in items:
+            if it["docid"]:
+                it["text"] = e.post("/get", {"ref": it["docid"], "namespaceId": args.namespace})["text"]
+    out.results(items, fmt, full=args.full)
+
+
+def cmdQuery(args) -> None:
+    fmt = _fmt(args)
+    r = _engine(args).post("/recall", {"query": args.query, "namespaceId": args.namespace,
+                                        "effort": "medium" if args.deep else "low", "queryDate": args.date})
+    if fmt == "json":
+        return out.printJson(r)
+    if fmt == "files":
+        for n in r["notes"]:
+            print(f"[[{n['title']}]]")
+        for s in r["sources"]:
+            print(s.get("uri") or s.get("docid") or s["title"])
+        return
+    if fmt in ("md", "xml"):
+        parts = []
+        if r["findings"]:
+            parts.append("## Findings\n\n" + "\n".join(f"- {f}" for f in r["findings"]))
+        for n in r["notes"]:
+            parts.append(f"## Note: {n['title']} ({n['folder']})\n\n{n['body']}")
+        for s in r["sources"]:
+            parts.append(f"## Source {s.get('docid', '')} · {s['date'][:10]} · {s['title']}\n\n{s['text']}")
+        if r.get("relevantMemory"):
+            parts.append("## Memory\n\n" + r["relevantMemory"])
+        print("\n\n".join(parts) or "No matching memory found.")
+        return
+    if not (r["findings"] or r["notes"] or r["sources"]):
+        print("No matching memory found.")
+        return
+    if r["findings"]:
+        print(out.bold("Findings"))
+        for f in r["findings"]:
+            print(f"  - {f}")
+    if r["notes"]:
+        print(out.bold("\nNotes"))
+        for n in r["notes"]:
+            print(f"  [[{n['title']}]]  {out.dim(n['folder'])}")
+            if args.full:
+                print("    " + n["body"].replace("\n", "\n    "))
+    if r["sources"]:
+        print(out.bold("\nSources"))
+        for s in r["sources"]:
+            where = s.get("uri") or ""
+            print(f"  {s.get('docid', ''):8} {s['date'][:10]}  {s['kind']:8} {s['title']}  {out.dim(where)}")
+            if s.get("context"):
+                print(out.dim(f"           Context: {s['context']}"))
+            if args.full:
+                print("    " + s["text"].replace("\n", "\n    "))
+            elif not r["findings"]:  # the agent was skipped: one source answers a simple lookup
+                text = " ".join(s["text"].split())
+                print(f"           {text[:400]}{'…' if len(text) > 400 else ''}")
+    print(out.dim("\nOpen any of these: kormem get <docid | note title>"))
+
+
+def _splitRef(ref: str):
+    """``path:from:count`` → (path, from, count)."""
+    import re
+    m = re.match(r"^(.*?)(?::(\d+))?(?::(\d+))?$", ref)
+    return m.group(1), (int(m.group(2)) if m.group(2) else None), (int(m.group(3)) if m.group(3) else None)
+
+
+def cmdGet(args) -> None:
+    ref, fromLine, count = _splitRef(args.ref)
+    fromLine = args.from_line or fromLine or 1
+    maxLines = args.l or count
+    try:
+        doc = _engine(args).post("/get", {"ref": ref, "namespaceId": args.namespace})
+    except EngineError as e:
+        print(f"{e}", file=sys.stderr)
+        sugg = (e.detail or {}).get("suggestions") if isinstance(e.detail, dict) else None
+        if sugg:
+            print("Did you mean:\n  " + "\n  ".join(sugg), file=sys.stderr)
+        sys.exit(1)
+    doc["text"] = out.sliceLines(doc["text"], fromLine, maxLines)
+    doc["fromLine"] = fromLine
+    out.documents([doc], _fmt(args), lineNumbers=not args.no_line_numbers)
+
+
+def cmdMultiGet(args) -> None:
+    docs = _engine(args).post("/multi-get", {"pattern": args.pattern, "maxBytes": args.max_bytes,
+                                             "namespaceId": args.namespace})
+    for d in docs:
+        if "text" in d and args.l:
+            d["text"] = out.sliceLines(d["text"], 1, args.l)
+    out.documents(docs, _fmt(args), lineNumbers=not args.no_line_numbers)
+
+
+def cmdLs(args) -> None:
+    r = _engine(args).get("/ls", namespaceId=args.namespace, path=args.path or "")
+    if args.json:
+        return out.printJson(r)
+    if "entries" not in r:
+        print(out.bold("Collections"))
+        for c in r["collections"] or []:
+            print(f"  {c['uri']:32} {c['documents']:>5} files  {out.dim(c['path'])}")
+        if not r["collections"]:
+            print(out.dim("  (none: kormem collection add <folder> --name <name>)"))
+        print(out.bold("\nVault"))
+        for f in r["vault"]:
+            print(f"  {f['uri']:48} {f['notes']:>5} notes")
+        return
+    for e in r["entries"]:
+        print(f"{e.get('docid', ''):8} {e['date']:10}  {e['uri']}" + (f"  {out.dim(e['title'])}" if e["kind"] != "note" else ""))
+    if not r["entries"]:
+        print(f"Nothing in {r['path']}.")
+
+
+# ----------------------------------------------------------------- memory
+
+
+def cmdRemember(args) -> None:
+    text = " ".join(args.text) if args.text else args.content
+    if not text:
+        raise EngineError('Usage: kormem remember "text" [--role user|assistant]')
+    _engine(args).post("/ingest/text", {"content": text, "namespaceId": args.namespace,
+                                        "platform": "conversation", "role": args.role})
+    print("Remembered. It is filed into the vault in the background (kormem extract --wait to do it now).")
+
+
+def cmdLessons(args) -> None:
+    r = _engine(args).get("/lessons", namespaceId=args.namespace, project=args.project)
+    if args.json:
+        return out.printJson(r)
+    print(r["lessons"] or "No lessons yet. They come from things like \"always use pnpm\" said in your sessions.")
+
+
+def cmdChat(args) -> None:
+    e = _engine(args)
+    if args.sub == "close":
+        out.printJson(e.post("/chat/close", {"namespaceId": args.namespace, "sessionId": args.session}))
+        return
+    turn = {"role": args.role, "content": args.content}
+    out.printJson(e.post("/chat/append", {"namespaceId": args.namespace, "sessionId": args.session,
+                                          "turns": [turn], "project": args.project}))
+
+
+def cmdExtract(args) -> None:
+    e = _engine(args)
+    if args.park or args.resume:
+        r = e.post("/extract/queue", {"action": "park" if args.park else "resume", "namespacePrefix": args.prefix})
+        print(f"{'Parked' if args.park else 'Resumed'} {r['moved']} extraction job(s).")
+        return
+    if not args.wait:
+        st = e.get("/status", namespaceId=args.namespace)
+        print(f"{st.get('pendingExtractions', 0)} source(s) waiting for extraction. "
+              "It runs in the background; --wait processes them now.")
+        return
+    r = e.post("/extract/run", {"namespaceId": args.namespace, "maxJobs": args.max})
+    print(f"Extracted {r['processed']} source(s); {r['pending']} still waiting.")
+
+
+def _maintain(args, condense: bool) -> None:
+    allNs = getattr(args, "all", False) or bool(getattr(args, "prefix", ""))
+    r = _engine(args).post("/maintain", {
+        "namespaceId": None if allNs else args.namespace, "namespacePrefix": getattr(args, "prefix", "") or "",
+        "condense": condense, "vacuum": args.vacuum})
+    if args.json:
+        return out.printJson(r)
+    keys = ("memoryLinesMoved", "segmentsCompacted", "vectorsRepacked", "notesArchived", "notesMerged",
+            "notesCondensed", "memoryVectorsDropped", "chunkVectorsDropped")
+    total = {k: sum(int(rep.get(k) or 0) for rep in r["reports"]) for k in keys}
+    done = ", ".join(f"{k} {v}" for k, v in total.items() if v)
+    print(f"Maintained {r['namespaces']} namespace(s): {done or 'nothing to do'}.")
+
+
+def cmdMaintain(args) -> None:
+    _maintain(args, condense=not args.no_condense)
+
+
+def cmdCleanup(args) -> None:
+    _maintain(args, condense=False)
+
+
+def cmdNotes(args) -> None:
+    e = _engine(args)
+    if args.sub in ("ls", "list"):
+        rows = e.post("/notes/list", None, namespaceId=args.namespace, para=args.para)
+        if args.json:
+            return out.printJson(rows)
+        for n in rows:
+            print(f"{n['relPath']}")
+    elif args.sub == "read":
+        print(e.post("/get", {"ref": args.ref, "namespaceId": args.namespace})["text"])
+    elif args.sub == "links":
+        out.printJson(e.post("/notes/links", {"ref": args.ref, "namespaceId": args.namespace}))
+    elif args.sub == "moc":
+        print(e.post("/notes/moc", None, namespaceId=args.namespace)["content"])
+
+
+# ------------------------------------------------------------------ admin
+
+
+def cmdStatus(args) -> None:
+    e = _engine(args)
+    st = e.get("/status", namespaceId=args.namespace)
+    cols = e.get("/collections", namespaceId=args.namespace)
+    ctx = e.get("/contexts")
+    emb = e.get("/embeddings/status")
+    if args.json:
+        return out.printJson({**st, "collections": cols, "contexts": ctx, "embeddings": emb})
+    print(f"{out.bold('kormem')} {st['engineVersion']}  home {st['home']}  namespace {st['namespaceId']}")
+    print(f"Sources {st['documentCount']}  chunks {st['segmentCount']}  "
+          f"waiting: embed {st['pendingEmbeds']}, extract {st.get('pendingExtractions', 0)}")
+    print(f"Embeddings {emb['provider']} / {emb['model']} / {emb['dimension']}-d")
+    for w in emb.get("warnings") or []:
+        print(f"  warning: {w}")
+    print(out.bold("Collections"))
+    for c in cols:
+        print(f"  {c['name']:16} {c['documents']:>5} files  {c['path']}")
+        if c.get("context"):
+            print(out.dim(f"                   Context: {c['context']}"))
+    if not cols:
+        print(out.dim("  (none)"))
+    if ctx.get("/"):
+        print(out.dim(f"Global context: {ctx['/']}"))
+
+
+def cmdDoctor(args) -> None:
+    ok = lambda b: "ok" if b else "missing"  # noqa: E731
+    print(f"kormem        {__version__}")
+    print(f"python        {platform.python_version()} ({sys.executable})")
+    print(f"home          {kormemHome()}")
+    print(f"engine url    {baseUrl()}")
+    print(f"key file      {getEnvPath()}{'' if getEnvPath().exists() else ' (missing: run kormem init)'}")
+    for key in API_KEYS:
+        print(f"{key:13} {'set' if os.environ.get(key) else 'not set'}")
+    if not os.environ.get("GEMINI_API_KEY"):
+        print("              embeddings fall back to a local model (BAAI/bge-base-en-v1.5)")
+    if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("OPENAI_API_KEY")):
+        print("              extraction into the vault needs GEMINI_API_KEY or OPENAI_API_KEY")
+    if not os.environ.get("OPENAI_API_KEY"):
+        print("              the recall agent needs OPENAI_API_KEY; query returns its first pass without it")
+    e = _engine(args)
+    try:
+        e.ensure()
+        emb = e.get("/embeddings/status")
+        print(f"engine        {ok(True)} ({e.health().get('version')})")
+        print(f"embeddings    {emb['provider']} / {emb['model']} / {emb['dimension']}-d")
+        if emb.get("storedDims"):
+            print(f"index dims    {', '.join(map(str, emb['storedDims']))}")
+        print(f"rerank        {emb.get('rerankModel') if emb.get('rerankEnabled') else 'off'}")
+        for w in emb.get("warnings") or []:
+            print(f"warning       {w}")
+    except EngineError as err:
+        print(f"engine        not running: {err}")
+        print(f"              log: {logPath()}")
+
+
+def cmdStop(args) -> None:
+    print("Engine stopped." if Engine(args.namespace).stop() else "Engine was not running.")
+
+
+def cmdServe(args) -> None:
+    from kormem.server.app import runServer
+    runServer(host=args.host, port=args.port)
+
+
+def cmdMcp(args) -> None:
+    from kormem.cli.mcp_server import run
+    run(args.namespace)
+
+
+def cmdHook(args) -> None:
+    from kormem.cli.hook import run
+    run(args.namespace)
+
+
+# ----------------------------------------------------------------- parser
+
+
+def _parser() -> argparse.ArgumentParser:
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--namespace", default=os.environ.get("KORMEM_NAMESPACE", "main"),
+                        help="memory namespace (default: main, or $KORMEM_NAMESPACE)")
+    common.add_argument("--json", action="store_true", dest="as_json", help="JSON output")
+
+    fmt = argparse.ArgumentParser(add_help=False)
+    fmt.add_argument("--format", choices=out.FORMATS, help="cli (default) | json | csv | md | xml | files")
+    for f in ("csv", "md", "xml", "files"):
+        fmt.add_argument(f"--{f}", action="store_true", dest=f"as_{f}", help=argparse.SUPPRESS)
+
+    p = argparse.ArgumentParser(prog="kormem", description="Local memory for AI agents: index, vault, recall.",
+                                epilog=QUICK_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--version", action="version", version=f"kormem {__version__}")
+    sub = p.add_subparsers(dest="command", metavar="<command>")
+
+    def add(name, fn, help_, parents=(common,), aliases=()):
+        sp = sub.add_parser(name, help=help_, parents=list(parents), aliases=list(aliases))
+        sp.set_defaults(fn=fn)
+        return sp
+
+    s = add("init", cmdInit, "set up ~/.kormem, the key file, the engine and Claude Code")
+    s.add_argument("--skip-agents", action="store_true", help="don't install the Claude Code plugin")
+
+    c = add("collection", cmdCollection, "add, list, remove, rename or show indexed folders")
+    cs = c.add_subparsers(dest="sub", required=True)
+    a = cs.add_parser("add", parents=[common], help="index a folder (or file) as a collection")
+    a.add_argument("path")
+    a.add_argument("--name", help="collection name (default: folder name)")
+    a.add_argument("--mask", default="**/*", help='glob(s), comma-separated, e.g. "**/*.md,docs/**"')
+    cs.add_parser("list", aliases=["ls"], parents=[common])
+    r = cs.add_parser("remove", aliases=["rm"], parents=[common])
+    r.add_argument("name")
+    r = cs.add_parser("rename", aliases=["mv"], parents=[common])
+    r.add_argument("old")
+    r.add_argument("new")
+    r = cs.add_parser("show", parents=[common])
+    r.add_argument("name")
+
+    c = add("context", cmdContext, "describe a collection, folder or everything, to guide filing and recall")
+    cs = c.add_subparsers(dest="sub", required=True)
+    a = cs.add_parser("add", parents=[common], help='context add [path] "description"')
+    a.add_argument("items", nargs="+", metavar="[path] text")
+    cs.add_parser("list", aliases=["ls"], parents=[common])
+    r = cs.add_parser("rm", aliases=["remove"], parents=[common])
+    r.add_argument("path")
+
+    s = add("ingest", cmdIngest, "index a file, folder or URL once")
+    s.add_argument("target")
+    s.add_argument("--collection", "-c")
+
+    s = add("update", cmdUpdate, "re-index collections (only changed files)")
+    s.add_argument("name", nargs="?")
+    s.add_argument("--no-prune", action="store_true", help="keep sources whose files were deleted")
+
+    s = add("embed", cmdEmbed, "embed chunks still waiting (-f re-embeds everything)")
+    s.add_argument("-f", "--force", action="store_true")
+
+    for name, help_ in (("search", "keyword (BM25) search, fast"),
+                        ("vsearch", "semantic vector search")):
+        s = add(name, cmdSearch, help_, parents=(common, fmt),
+                aliases=("vector-search",) if name == "vsearch" else ())
+        s.add_argument("query")
+        s.add_argument("-n", type=int, help="results (default 5, or 20 for --json/--files)")
+        s.add_argument("-c", "--collection")
+        s.add_argument("--all", action="store_true")
+        s.add_argument("--min-score", type=float, default=0.0)
+        s.add_argument("--full", action="store_true", help="show whole sources")
+        s.add_argument("--no-rerank", action="store_true")
+
+    s = add("query", cmdQuery, "recall: the agent walks notes, links and sources (best quality)",
+            parents=(common, fmt), aliases=("deep-search", "recall"))
+    s.add_argument("query")
+    s.add_argument("--deep", action="store_true", help="more agent rounds, for counts and timelines")
+    s.add_argument("--full", action="store_true", help="show note bodies and source text")
+    s.add_argument("--date", help="answer as of this date (YYYY-MM-DD)")
+
+    s = add("get", cmdGet, "a note or source: #docid, kormem:// address, title or path[:from[:count]]",
+            parents=(common, fmt))
+    s.add_argument("ref")
+    s.add_argument("-l", type=int, help="max lines")
+    s.add_argument("--from", type=int, dest="from_line", help="start line")
+    s.add_argument("--no-line-numbers", action="store_true")
+    s.add_argument("--full", action="store_true", help=argparse.SUPPRESS)
+
+    s = add("multi-get", cmdMultiGet, "several notes or sources by glob or comma-separated list",
+            parents=(common, fmt))
+    s.add_argument("pattern")
+    s.add_argument("-l", type=int, help="max lines per item")
+    s.add_argument("--max-bytes", type=int, default=65_536)
+    s.add_argument("--no-line-numbers", action="store_true")
+
+    s = add("ls", cmdLs, "collections and vault folders, or what is inside one")
+    s.add_argument("path", nargs="?")
+
+    s = add("remember", cmdRemember, "store a fact; filed into the vault in the background")
+    s.add_argument("text", nargs="*")
+    s.add_argument("--content")
+    s.add_argument("--role", choices=("user", "assistant"))
+
+    s = add("lessons", cmdLessons, "what you told assistants to remember about working with you")
+    s.add_argument("--project")
+
+    c = add("chat", cmdChat, "append turns to a live chat, or close it")
+    cs = c.add_subparsers(dest="sub", required=True)
+    a = cs.add_parser("append", parents=[common])
+    a.add_argument("--session", required=True)
+    a.add_argument("--role", choices=("user", "assistant"), default="user")
+    a.add_argument("--content", required=True)
+    a.add_argument("--project")
+    a = cs.add_parser("close", parents=[common])
+    a.add_argument("--session", required=True)
+
+    add("hook", cmdHook, "Claude Code hook: SessionStart / Stop / SessionEnd event on stdin")
+
+    s = add("extract", cmdExtract, "extraction queue: show it, or --wait to process it now")
+    s.add_argument("--wait", action="store_true")
+    s.add_argument("--max", type=int, default=50)
+    s.add_argument("--park", action="store_true", help="hold pending jobs")
+    s.add_argument("--resume", action="store_true", help="release held jobs")
+    s.add_argument("--prefix", default="", help="namespace prefix for --park / --resume")
+
+    for name, fn, help_ in (("maintain", cmdMaintain, "shrink and tidy memory: archive, merge, condense (runs daily)"),
+                            ("cleanup", cmdCleanup, "free part of maintain: compact the index, no model calls")):
+        s = add(name, fn, help_)
+        s.add_argument("--all", action="store_true", help="every namespace")
+        s.add_argument("--prefix", default="", help="namespaces starting with this")
+        s.add_argument("--vacuum", action="store_true", help="give freed space back to the disk")
+        if name == "maintain":
+            s.add_argument("--no-condense", action="store_true", help="skip the one paid step")
+
+    c = add("notes", cmdNotes, "vault notes: ls, read, links, moc")
+    cs = c.add_subparsers(dest="sub", required=True)
+    a = cs.add_parser("ls", aliases=["list"], parents=[common])
+    a.add_argument("--para", choices=("projects", "areas", "resources", "archive", "source", "meta"))
+    for n in ("read", "links"):
+        a = cs.add_parser(n, parents=[common])
+        a.add_argument("ref")
+    cs.add_parser("moc", parents=[common])
+
+    add("status", cmdStatus, "index, queue, collections and embedding provider")
+    add("doctor", cmdDoctor, "check the install, keys and engine")
+    add("mcp", cmdMcp, "MCP server on stdio")
+    add("stop", cmdStop, "stop the background engine")
+    s = add("serve", cmdServe, "run the engine in the foreground")
+    s.add_argument("--host", default="127.0.0.1")
+    s.add_argument("--port", type=int, default=None)
+    return p
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    loadEnvFile()
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if not getattr(args, "fn", None):
+        parser.print_help()
+        return
+    args.json = getattr(args, "as_json", False)
+    try:
+        args.fn(args)
+    except EngineError as e:
+        print(f"kormem: {e}", file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except BrokenPipeError:
+        pass
+
+
+if __name__ == "__main__":
+    main()

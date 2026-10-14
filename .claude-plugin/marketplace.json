@@ -1,0 +1,24 @@
+{
+  "name": "kormem",
+  "description": "kormem: local long-term memory for Claude Code and other agents.",
+  "owner": {
+    "name": "Kushal Sinha"
+  },
+  "plugins": [
+    {
+      "name": "kormem",
+      "source": "./plugin",
+      "description": "Long-term memory for Claude Code: remembers every session, loads your lessons at start, and recalls past decisions, preferences and documents.",
+      "version": "0.1.0",
+      "repository": "https://github.com/kushalsinha/kormem",
+      "license": "MIT",
+      "keywords": [
+        "memory",
+        "recall",
+        "lessons",
+        "mcp",
+        "qmd"
+      ]
+    }
+  ]
+}

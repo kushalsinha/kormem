@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "kormem": {
+      "command": "kormem",
+      "args": ["mcp"]
+    }
+  }
+}

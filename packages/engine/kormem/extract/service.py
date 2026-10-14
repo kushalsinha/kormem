@@ -24,6 +24,7 @@ import time
 from typing import Any, List, Optional
 
 from kormem.core.config import KormemConfig, loadConfig
+from kormem import library
 from kormem.core.ids import contentHash
 from kormem.extract.vault_linker import ExtractionUnit, VaultLinker
 from kormem.ingest.chat_sessions import chatTurns, documentText, enqueueSettledChats
@@ -81,6 +82,7 @@ class ExtractionService:
         sections = splitSections(text)
         hashes = [contentHash(s) for s in sections]
         done = self.store.extractedSectionHashes(job["namespaceId"], hashes)
+        context = library.contextFor(library.documentUri(doc))
         units = []
         for i, (sec, h) in enumerate(zip(sections, hashes)):
             if h in done:
@@ -89,6 +91,7 @@ class ExtractionService:
                 namespaceId=job["namespaceId"], kind="document", title=doc["title"] or "Untitled",
                 date=_date(meta, doc["createdAt"]), text=sec, documentId=doc["id"],
                 location=doc["canonicalUrl"] or "", sourceNote=meta.get("sourceNote"), span=f"part {i + 1}/{len(sections)}" if len(sections) > 1 else "",
+                context=context,
             ))
             units[-1].sectionHash = h  # type: ignore[attr-defined]
         return units
