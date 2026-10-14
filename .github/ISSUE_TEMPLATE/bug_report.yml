@@ -1,0 +1,53 @@
+name: Bug report
+description: Something is broken or behaves differently from the docs
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. For security problems, do not use this form; see SECURITY.md.
+        Please remove API keys and personal text from anything you paste.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you run, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The smallest set of commands that shows the problem.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `kormem doctor` and `kormem status`
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install kormem?
+      options:
+        - npm
+        - bun
+        - pip or uvx
+        - From source (git checkout)
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and version
+      placeholder: macOS 15, Ubuntu 24.04, Windows 11 WSL
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant lines from ~/.kormem/logs/engine.log, or run with KORMEM_DEBUG=1.
+      render: text
