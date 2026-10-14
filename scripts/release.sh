@@ -54,7 +54,8 @@ UV_PUBLISH_TOKEN="$PYPI_TOKEN" uv publish --check-url https://pypi.org/simple/ d
 echo "== npm"
 NPMRC=$(mktemp); trap 'rm -f "$NPMRC"' EXIT
 printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$NPMRC"
-NPM_CONFIG_USERCONFIG="$NPMRC" npm publish "./dist/kormem-$VERSION.tgz" --access public
+# npm tokens can only stage; approve the staged version on npmjs.com (2FA) to publish it.
+NPM_CONFIG_USERCONFIG="$NPMRC" npx -y npm@latest stage publish "./dist/kormem-$VERSION.tgz" --access public
 
 git tag -a "v$VERSION" -m "kormem $VERSION"
-echo "Published kormem $VERSION to PyPI and npm, and tagged v$VERSION locally (push it with: git push origin v$VERSION)."
+echo "Published kormem $VERSION to PyPI and staged it on npm (approve it on npmjs.com), and tagged v$VERSION locally (push it with: git push origin v$VERSION)."
