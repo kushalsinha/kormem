@@ -3,6 +3,8 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/kushalsinha/kormem/actions/workflows/ci.yml/badge.svg)](https://github.com/kushalsinha/kormem/actions/workflows/ci.yml)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![npm](https://img.shields.io/npm/v/kormem.svg)](https://www.npmjs.com/package/kormem)
+[![PyPI](https://img.shields.io/pypi/v/kormem.svg)](https://pypi.org/project/kormem/)
 
 Local long-term memory for AI agents. kormem indexes everything you say to assistants and every file, folder or URL you add, then files it into an Obsidian-compatible vault of linked notes. A small recall agent walks that vault to answer questions with dates and sources.
 

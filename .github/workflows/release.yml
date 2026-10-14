@@ -1,0 +1,118 @@
+# Publishes kormem to PyPI (engine + CLI) and npm (launcher) when a GitHub release is published.
+# Mirrors scripts/release.sh. PyPI goes first because the npm launcher installs
+# kormem==<version> from PyPI on first run.
+#
+# One-time setup:
+#   PyPI: add this repo + workflow (release.yml, environment pypi) as a trusted publisher
+#         at https://pypi.org/manage/project/kormem/settings/publishing/ (no token needed).
+#   npm:  add an NPM_TOKEN secret to the npm environment. npm tokens can only stage, so
+#         approve the staged version on npmjs.com (2FA) to finish the publish.
+#
+# Run it by hand from the Actions tab for a dry run (build and checks, no upload).
+name: release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish to PyPI and npm (leave off for a dry run)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Read version and check that all manifests agree
+        id: v
+        env:
+          EVENT: ${{ github.event_name }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION=$(sed -nE 's/^__version__ = "(.*)"/\1/p' packages/engine/kormem/__init__.py)
+          for f in packages/cli/package.json plugin/.claude-plugin/plugin.json .claude-plugin/marketplace.json; do
+            v=$(sed -nE 's/.*"version": *"([^"]+)".*/\1/p' "$f" | head -1)
+            [ "$v" = "$VERSION" ] || { echo "Version mismatch: $f has $v, __init__.py has $VERSION"; exit 1; }
+          done
+          if [ "$EVENT" = "release" ] && [ "$TAG" != "v$VERSION" ]; then
+            echo "Release tag $TAG does not match v$VERSION"; exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "kormem $VERSION"
+
+      - name: Test engine
+        working-directory: packages/engine
+        run: |
+          uv venv
+          uv pip install -e '.[dev]'
+          uv run --no-sync pytest tests -q
+
+      - name: Build packages
+        run: |
+          mkdir -p dist/py dist/npm
+          (cd packages/engine && uv build --out-dir ../../dist/py)
+          (cd packages/cli && npm install --no-audit --no-fund && npm pack --pack-destination ../../dist/npm)
+          ls -R dist
+
+      - name: Check packages
+        run: |
+          uvx twine check dist/py/*
+          (cd packages/cli && npm publish --dry-run > /dev/null && echo 'npm publish --dry-run ok')
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+  pypi:
+    needs: build
+    if: github.event_name == 'release' || inputs.publish
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # PyPI trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/py
+
+  npm:
+    needs: [build, pypi]
+    if: github.event_name == 'release' || inputs.publish
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Stage npm release
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$RUNNER_TEMP/npmrc"
+          NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/npmrc" npx -y npm@latest stage publish "./dist/npm/kormem-$VERSION.tgz" --access public
+          echo "Staged kormem $VERSION on npm. Approve it on npmjs.com to publish." >> "$GITHUB_STEP_SUMMARY"
