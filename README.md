@@ -1,5 +1,9 @@
 # kormem
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/kushalsinha/kormem/actions/workflows/ci.yml/badge.svg)](https://github.com/kushalsinha/kormem/actions/workflows/ci.yml)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
 Local long-term memory for AI agents. kormem indexes everything you say to assistants and every file, folder or URL you add, then files it into an Obsidian-compatible vault of linked notes. A small recall agent walks that vault to answer questions with dates and sources.
 
 If you know [QMD](https://github.com/tobi/qmd), you already know the commands: `collection add`, `context add`, `search`, `vsearch`, `query`, `get`, `multi-get` and `ls` work the same way. kormem adds the memory layer on top: chats, lessons, a linked vault and recall.
@@ -349,6 +353,14 @@ scripts/release.sh --dry-run                                         # build and
 ```
 
 The `kormem` npm package also exports a small JS SDK (`createMemoryStore`) that talks to the engine over HTTP. See [docs/integrations/](docs/integrations/) for Claude Code and OpenClaw.
+
+## Contributing
+
+Bug reports, docs fixes and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for how to set up a development environment and what a good pull request looks like. Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md). Changes are tracked in the [changelog](CHANGELOG.md).
+
+## Security
+
+Please report vulnerabilities privately, not in a public issue. See [SECURITY.md](SECURITY.md).
 
 ## License
 
