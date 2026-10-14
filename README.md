@@ -19,6 +19,22 @@ flowchart LR
   A --> OUT["Dated findings<br/>+ notes + sources"]
 ```
 
+## Benchmark
+
+LongMemEval-S, all 500 questions, scored by the official GPT-4o judge (`evaluate_qa.py`). Each question gets one answer from a curated context of about 19k tokens.
+
+| System | Answer model | Accuracy |
+|---|---|---|
+| Mastra Observational Memory | gpt-5-mini | 94.9% |
+| **Kormem** | **Claude Sonnet 5.5** | **94.4%** |
+| **Kormem** | **GPT-6.1 Sol** | **94.0%** |
+| Mem0 platform | GPT-5 (custom judge) | 93.4–94.4% |
+| gbrain | Claude Sonnet 4.6 | 86.6% |
+| Supermemory | Gemini 3 Pro | 85.2% |
+| Zep | GPT-4o | 71.2% |
+
+Other systems' numbers are self-reported; see the [full report](docs/benchmarks/longmemeval.md) for setups and caveats. The answer model accounts for much of the spread: on identical context, Kormem ranges from 88.0% (Grok 4.7) to 94.4% (Sonnet 5.5).
+
 ## Quick start
 
 ```sh
@@ -326,22 +342,6 @@ On a copy of 60 LongMemEval users, a maintenance pass cut the index from 403 MB 
 | `KORMEM_PYTHON` | unset | npm launcher: use this Python (with `kormem` installed) instead of the managed one |
 | `KORMEM_ENGINE_SPEC` | `kormem==<version>` | npm launcher: what to install (a version, wheel or git URL) |
 | `KORMEM_DEBUG` | unset | Print hook errors instead of dropping them |
-
-## Benchmark
-
-LongMemEval-S, all 500 questions, scored by the official GPT-4o judge (`evaluate_qa.py`). Each question gets one answer from a curated context of about 19k tokens.
-
-| System | Answer model | Accuracy |
-|---|---|---|
-| Mastra Observational Memory | gpt-5-mini | 94.9% |
-| **Kormem** | **Claude Sonnet 5.5** | **94.4%** |
-| **Kormem** | **GPT-6.1 Sol** | **94.0%** |
-| Mem0 platform | GPT-5 (custom judge) | 93.4–94.4% |
-| gbrain | Claude Sonnet 4.6 | 86.6% |
-| Supermemory | Gemini 3 Pro | 85.2% |
-| Zep | GPT-4o | 71.2% |
-
-Other systems' numbers are self-reported; see the [full report](docs/benchmarks/longmemeval.md) for setups and caveats. The answer model accounts for much of the spread: on identical context, Kormem ranges from 88.0% (Grok 4.7) to 94.4% (Sonnet 5.5).
 
 ## Development
 
