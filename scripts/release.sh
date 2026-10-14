@@ -49,12 +49,12 @@ if [[ -n "$DRY" ]]; then
 fi
 
 echo "== PyPI"
-UV_PUBLISH_TOKEN="$PYPI_TOKEN" uv publish dist/kormem-"$VERSION".tar.gz dist/kormem-"$VERSION"-py3-none-any.whl
+UV_PUBLISH_TOKEN="$PYPI_TOKEN" uv publish --check-url https://pypi.org/simple/ dist/kormem-"$VERSION".tar.gz dist/kormem-"$VERSION"-py3-none-any.whl
 
 echo "== npm"
 NPMRC=$(mktemp); trap 'rm -f "$NPMRC"' EXIT
 printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$NPMRC"
-NPM_CONFIG_USERCONFIG="$NPMRC" npm publish "dist/kormem-$VERSION.tgz" --access public
+NPM_CONFIG_USERCONFIG="$NPMRC" npm publish "./dist/kormem-$VERSION.tgz" --access public
 
 git tag -a "v$VERSION" -m "kormem $VERSION"
 echo "Published kormem $VERSION to PyPI and npm, and tagged v$VERSION locally (push it with: git push origin v$VERSION)."
