@@ -20,4 +20,20 @@ kormem mcp                                  # MCP server for Claude Code, Claude
 
 kormem needs one key: put `GEMINI_API_KEY` in `~/.kormem/.env`, which `kormem init` creates. It runs embeddings, extraction and the recall agent. Without it, kormem still indexes and searches locally. `kormem doctor` checks the setup.
 
+## Benchmark
+
+LongMemEval-S, all 500 questions, scored by the official GPT-4o judge. Each question gets one answer from a curated context of about 19k tokens.
+
+| System | Answer model | Accuracy |
+|---|---|---|
+| Mastra Observational Memory | gpt-5-mini | 94.9% |
+| **Kormem** | **Claude Sonnet 5.5** | **94.4%** |
+| **Kormem** | **GPT-6.1 Sol** | **94.0%** |
+| Mem0 platform | GPT-5 (custom judge) | 93.4–94.4% |
+| gbrain | Claude Sonnet 4.6 | 86.6% |
+| Supermemory | Gemini 3 Pro | 85.2% |
+| Zep | GPT-4o | 71.2% |
+
+Other systems' numbers are self-reported. Setups and caveats: [full report](https://github.com/kushalsinha/kormem/blob/main/docs/benchmarks/longmemeval.md).
+
 Full documentation, diagrams and the Claude Code plugin: https://github.com/kushalsinha/kormem

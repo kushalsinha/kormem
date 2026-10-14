@@ -281,9 +281,7 @@ stateDiagram-v2
   Archived --> Current: new knowledge about it arrives
 ```
 
-<!-- benchmark:start -->
 On a copy of 60 LongMemEval users, a maintenance pass cut the index from 403 MB to 186 MB in about 10 seconds. Condensing costs about $0.008 per user.
-<!-- benchmark:end -->
 
 ## Data storage
 
@@ -325,7 +323,6 @@ On a copy of 60 LongMemEval users, a maintenance pass cut the index from 403 MB 
 | `KORMEM_ENGINE_SPEC` | `kormem==<version>` | npm launcher: what to install (a version, wheel or git URL) |
 | `KORMEM_DEBUG` | unset | Print hook errors instead of dropping them |
 
-<!-- benchmark:start -->
 ## Benchmark
 
 LongMemEval-S, all 500 questions, scored by the official GPT-4o judge (`evaluate_qa.py`). Each question gets one answer from a curated context of about 19k tokens.
@@ -342,7 +339,6 @@ LongMemEval-S, all 500 questions, scored by the official GPT-4o judge (`evaluate
 
 Other systems' numbers are self-reported; see the [full report](docs/benchmarks/longmemeval.md) for setups and caveats. The answer model accounts for much of the spread: on identical context, Kormem ranges from 88.0% (Grok 4.7) to 94.4% (Sonnet 5.5).
 
-<!-- benchmark:end -->
 ## Development
 
 ```sh

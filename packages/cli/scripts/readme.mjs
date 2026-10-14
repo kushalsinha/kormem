@@ -1,10 +1,9 @@
-// Copies the repo README into the npm package without the benchmark sections
-// (between <!-- benchmark:start --> and <!-- benchmark:end -->); those stay on GitHub.
+// Copies the repo README into the npm package, pointing relative links at GitHub
+// so they still work on npmjs.com.
 import { readFileSync, writeFileSync, copyFileSync } from "node:fs";
 
+const REPO = "https://github.com/kushalsinha/kormem/blob/main/";
 const readme = readFileSync("../../README.md", "utf8")
-  .replace(/<!-- benchmark:start -->[\s\S]*?<!-- benchmark:end -->\n?/g, "")
-  .replace(/\n{3,}/g, "\n\n");
-if (/benchmark|longmemeval/i.test(readme)) throw new Error("README still mentions the benchmark outside the markers");
+  .replace(/\]\((?!https?:|#|mailto:)(?:\.\/|\/)?([^)]+)\)/g, (_, path) => `](${REPO}${path})`);
 writeFileSync("README.md", readme);
 copyFileSync("../../LICENSE", "LICENSE");
