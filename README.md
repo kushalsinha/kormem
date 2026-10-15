@@ -29,16 +29,14 @@ flowchart LR
 |---|---|---|
 | [Mastra Observational Memory](https://mastra.ai/research/observational-memory) | gpt-5-mini | 94.9% |
 | **Kormem** | **Claude Sonnet 5.5** | **94.4%** |
-| **Kormem** | **GPT-6.1 Sol** | **93.8%**¹ |
+| **Kormem** | **GPT-6.1 Sol** | **93.8%** |
 | **Kormem** | **GPT-6 Astra** | **93.6%** |
 | [Mem0 platform](https://github.com/mem0ai/memory-benchmarks) | GPT-5 (custom judge) | 93.4–94.4% |
 | [gbrain](https://github.com/garrytan/gbrain) | Claude Sonnet 4.6 | 86.6% |
 | [Supermemory](https://supermemory.ai/research/longmembench) | Gemini 3 Pro | 85.2% |
 | [Zep](https://arxiv.org/abs/2501.13956) | GPT-4o | 71.2% |
 
-¹ 461/500 in the full run; re-answering its 39 misses with the revised answer prompt (derive from stated facts before saying "I don't know") fixed 8, for 469/500. Details in the [full report](docs/benchmarks/longmemeval.md).
-
-Other systems' numbers are self-reported; see the [full report](docs/benchmarks/longmemeval.md) for setups and caveats. On identical context, Kormem ranges from 93.6% (Astra) to 94.4% (Sonnet 5.5); any of the three answers 481/500.
+Other systems' numbers are self-reported; see the [full report](docs/benchmarks/longmemeval.md) for setups and caveats. On identical context, Kormem ranges from 93.6% (Astra) to 94.4% (Sonnet 5.5); any of the three answers 481/500. Mem0's figure uses its own, more lenient judge. Re-judging our misses ([details](docs/benchmarks/longmemeval.md#under-mem0s-judge)) with that judge (same prompt, GPT-5) raises Kormem with Sonnet to **95.6%**, Sol and Astra to 94.4%.
 
 MemPalace publishes only retrieval recall (R@5: a gold session in the top 5), not answer accuracy, so it gets its own table. Same 500 questions, session level:
 

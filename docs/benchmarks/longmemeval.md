@@ -1,6 +1,6 @@
 # LongMemEval results
 
-Kormem scores **94.4% (472/500) on [LongMemEval-S](https://github.com/xiaowu0162/LongMemEval)** [7] with its current architecture, Claude Sonnet 5.5 as the answer model and the official GPT-4o judge (GPT-6.1 Sol 93.8%, GPT-6 Astra 93.6%). Retrieval puts every gold session in the answer context for 99.0% of questions.
+Kormem scores **94.4% (472/500) on [LongMemEval-S](https://github.com/xiaowu0162/LongMemEval)** [7] with its current architecture, Claude Sonnet 5.5 as the answer model and the official GPT-4o judge (GPT-6.1 Sol 93.8%, GPT-6 Astra 93.6%). On Mem0's more lenient judge, the same answers score 95.6% ([details](#under-mem0s-judge)). Retrieval puts every gold session in the answer context for 99.0% of questions.
 
 Dataset: `longmemeval_s_cleaned.json`, all 500 questions, including the 30 abstention questions.
 
@@ -10,9 +10,7 @@ Every session is ingested through the product path: chunks with `gemini-embeddin
 
 | | Result |
 |---|---|
-| Official judge | **93.8%** (469/500)¹ |
-| Full run before the prompt fix | 92.2% (461/500), task-averaged 93.2% |
-| By type (full run) | single-session assistant 56/56, user 68/70, knowledge update 74/78, temporal 123/133, preference 27/30, multi-session 113/133; abstention 26/30 |
+| Official judge | **94.4%** (472/500) with Claude Sonnet 5.5; 93.8% with GPT-6.1 Sol; 93.6% with GPT-6 Astra |
 | any@5 / all@5 / all@10 | 99.8% / 95.8% / 99.2% |
 | All gold sessions in context | 99.0% |
 | Latency per question (recall + answer) | p50 35 s, p90 64 s (recall alone p50 31 s) |
@@ -20,26 +18,35 @@ Every session is ingested through the product path: chunks with `gemini-embeddin
 | Recall cost | $0.39 recall agent, $0.08 query embeddings |
 | Storage | 0.53 MB vault per user |
 
-¹ The full run scored 461/500. In 38 of its 39 misses every gold session was in context; 12 were the answer model saying "I don't know" about a detail it could have derived (for example, subtracting two stated durations). Rule 11 of the answer prompt now asks it to derive from stated facts before abstaining. Re-answering the 39 misses from the same cached contexts fixed 8 (469/500). The 461 correct answers were not re-answered with the revised prompt; a control sample of 21 of them (13 abstention questions) stayed correct.
-
 ### By answer model
 
-Same cached contexts, same judge. Sonnet and Astra answered all 500 with the revised answer prompt in one run each; Sol's figure combines its full run with a re-answer of its misses (¹).
+Same cached contexts, same answer prompt, official judge. The answer prompt asks the model to derive a detail from stated facts (durations, differences, rates) before answering "I don't know"; Sol's answers were first generated with an earlier version of that rule, and the 39 questions it missed then were regenerated with the current one.
 
 | Answer model | Official judge | Task-averaged | Abstention | Multi-session | Temporal | Knowledge update | Single-session user / assistant / preference |
 |---|---|---|---|---|---|---|---|
 | Claude Sonnet 5.5 | **94.4%** (472/500) | **95.6%** | 25/30 | **120**/133 | 124/133 | **75**/78 | 68/70, 56/56, **29**/30 |
-| GPT-6.1 Sol | 93.8% (469/500)¹ | 93.2%² | **26**/30 | 113/133² | 123/133² | 74/78² | 68/70, 56/56, 27/30² |
+| GPT-6.1 Sol | 93.8% (469/500) | 94.9% | **26**/30 | 117/133 | 124/133 | **75**/78 | **69**/70, 56/56, 28/30 |
 | GPT-6 Astra | 93.6% (468/500) | 93.9% | **26**/30 | 117/133 | **125**/133 | **75**/78 | **69**/70, 56/56, 26/30 |
-
-² Full run before the prompt fix (461/500).
 
 - **The three are a statistical tie** (95% CI about ±2.1 pts at n=500). Together they answer 481/500; Sonnet alone gets 9 that neither GPT model does.
 - **Sonnet's lead is in multi-session and preference questions** (120/133 and 29/30). It gives up one abstention.
 - **Answer cost and speed.** Sonnet: $53.63 for 500 (26.1M input tokens; its tokenizer counts the same context ~1.6x higher), answer p50 5.4 s. Astra: 16.1M input and 0.07M output tokens, p50 5.9 s. Sol: about $33.
+- **The remaining misses are answer reasoning.** In 38 of Sol's 39 misses on its first pass, every gold session was in context; the exception (`gpt4_7abb270c`) needs six sessions and one ranked 14th. The rest are multi-session counting, date arithmetic and over-caution, plus a few likely judge errors (`gpt4_d12ceb0e` answered 59.6, the gold answer, and was marked wrong).
 
-- **The remaining misses are answer reasoning.** Only one of the 39 lacked a gold session (`gpt4_7abb270c`, which needs six sessions; one ranked 14th). The rest are multi-session counting, date arithmetic and over-caution, plus a few likely judge errors (`gpt4_d12ceb0e` answered 59.6, the gold answer, and was marked wrong).
-- **Multi-session is within run-to-run noise of the previous architecture** (113 vs 117; two Sol runs on the previous architecture scored 117 and 121). With the revised prompt, 4 of its 7 regressions answer correctly.
+### Under Mem0's judge
+
+Mem0 reports 93.4–94.4% using its own judge: one unified prompt for every question type that accepts semantic matches, partial abstentions and loose preference matches, run on GPT-5 ([`benchmarks/longmemeval/prompts.py`](https://github.com/mem0ai/memory-benchmarks/blob/main/benchmarks/longmemeval/prompts.py), commit `4b61c5d`). We re-judged every answer the official judge marked wrong with that prompt, verbatim, and Mem0's protocol (`python -m benchmark.mem0_judge`).
+
+| Answer model | Official judge | Misses Mem0's judge accepts (GPT-5) | With Mem0's judge (GPT-5) | Mem0's prompt on GPT-4o |
+|---|---|---|---|---|
+| Claude Sonnet 5.5 | 94.4% | 6 of 28 | **95.6%** (478/500) | 95.6% (478) |
+| GPT-6.1 Sol | 93.8% | 3 of 31 | 94.4% (472/500) | 94.6% (473) |
+| GPT-6 Astra | 93.6% | 4 of 32 | 94.4% (472/500) | 94.6% (473) |
+
+- **On Mem0's own judge, Kormem with Sonnet scores 95.6%,** 1.2 pts above Mem0's best reported figure (94.4%) and 2.2 above its committed results (93.4%).
+- **The prompt, not the judge model, makes the difference.** GPT-4o with Mem0's prompt accepts nearly the same misses as GPT-5.
+- **Several accepted misses match the gold answer outright.** The official judge rejected them anyway: `08f4fc43` "30 days" (gold "30 days", rejected for all three models), `gpt4_d12ceb0e` 59.6 (gold 59.6), `10d9b85a` "3 days" (gold "3 days"), and a correct abstention (`eeda8a6d_abs`). The rest are preference answers that fit the user's tastes without the gold's specifics.
+- **These are upper bounds.** Only official misses were re-judged; a lenient judge could in principle reject an answer the official judge accepted, which we did not measure.
 
 ## Previous architecture (2026-10-12): results by answer model
 
@@ -117,7 +124,7 @@ For the current architecture, see the notes under its [results](#current-archite
 ## Limitations
 
 1. **Recall is slow.** The recall agent makes several `gpt-6-luna` calls per question (median recall 31 s). It is cheap ($0.39 for 500 questions) but slower than embedding-only systems. The previous architecture used an OpenAI Decisions call and a rerank per question.
-2. **Single run per configuration.** We report no confidence intervals beyond the binomial estimate above. The current 469/500 combines a full run with a re-answer of its misses (see the footnote under its results).
+2. **Single run per configuration.** We report no confidence intervals beyond the binomial estimate above.
 3. **Ingestion provenance.** Chunks for 393 questions came from an earlier ingestion by the same chunker and were re-embedded with the current model. The other 107 were ingested fresh. Memory extraction ran fresh for all 500.
 
 ## Setup (previous architecture)
