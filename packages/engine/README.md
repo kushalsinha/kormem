@@ -18,7 +18,7 @@ kormem remember "I prefer pnpm over npm"
 kormem mcp                                  # MCP server for Claude Code, Claude Desktop, Cursor
 ```
 
-kormem needs one key: put `GEMINI_API_KEY` in `~/.kormem/.env`, which `kormem init` creates. It runs embeddings, extraction and the recall agent. Without it, kormem still indexes and searches locally. `kormem doctor` checks the setup.
+One key, in `~/.kormem/.env` (`kormem init` creates it): `OPENAI_API_KEY` runs extraction and the recall agent with `gpt-6-luna` and embeddings with `text-embedding-3-small`. `GEMINI_API_KEY` is optional (`kormem model set embedding gemini-embedding-2`). Without any key, embeddings run locally and kormem still indexes and searches. The answer comes from your assistant's own model. `kormem model` shows and changes the model behind each job; pick the embedding model once, since changing it re-embeds everything.
 
 ## Benchmark
 

@@ -15,10 +15,13 @@ from kormem.core.config import (
     DEFAULT_EMBEDDING_MODEL,
     DEFAULT_LOCAL_EMBED_MODEL,
     KormemConfig,
+    apiEmbeddingModel,
     getKormemHome,
     loadConfig,
+    selectedEmbeddingProvider,
 )
 from kormem.embeddings.gemini import GeminiEmbeddingProvider
+from kormem.embeddings.openai import OpenAIEmbeddingProvider
 
 
 class HashEmbeddingProvider(EmbeddingProvider):
@@ -143,21 +146,12 @@ def getInternalEmbedder(config: Optional[KormemConfig] = None) -> EmbeddingProvi
 
 def getEmbeddingProvider(config: Optional[KormemConfig] = None) -> EmbeddingProvider:
     config = config or loadConfig()
-    provider = (config.embeddingProvider or "gemini").lower()
-
+    provider = selectedEmbeddingProvider(config)
     if provider == "hash":
         return HashEmbeddingProvider(config.embeddingDim)
-
-    if provider == "local":
-        return _createLocalProvider(config)
-
+    if provider == "openai":
+        return OpenAIEmbeddingProvider(config.openaiApiKey, apiEmbeddingModel(config), config.embeddingDim)
     if provider == "gemini":
-        if config.geminiApiKey:
-            return _createGeminiProvider(config)
-        return _createLocalProvider(config)
-
-    # auto / unknown: gemini when key present, else local
-    if config.geminiApiKey:
         return _createGeminiProvider(config)
     return _createLocalProvider(config)
 
@@ -167,7 +161,7 @@ def _createGeminiProvider(config: KormemConfig) -> GeminiEmbeddingProvider:
         raise ValueError("GEMINI_API_KEY required for gemini embedding provider")
     return GeminiEmbeddingProvider(
         apiKey=config.geminiApiKey,
-        modelName=config.embeddingModel,
+        modelName=apiEmbeddingModel(config),
         dimension=config.embeddingDim,
     )
 

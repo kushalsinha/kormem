@@ -23,6 +23,7 @@ from typing import Any, Dict, List
 
 from benchmark.common import NAMESPACE_PREFIX, _loadDotEnv, datasetPath
 from kormem.core.config import loadConfig
+from kormem.embeddings.base import EmbeddingProvider
 from kormem.extract.service import ExtractionService
 from kormem.ingest.chat_sessions import ChatSessionService
 from kormem.ingest.service import IngestService
@@ -30,11 +31,77 @@ from kormem.vault.paths import vaultDir
 
 logger = logging.getLogger(__name__)
 
+# Chunk text -> vector from an earlier build of the same namespace (same chunker, same embedding
+# model), so a rebuild only pays for text it hasn't embedded before.
+_REUSE: Dict[str, Any] = {}  # text -> float32 vector
+_REFS: Dict[str, int] = {}   # namespaces being rebuilt that hold each text (filler sessions repeat)
+
+
+class ReuseEmbedder(EmbeddingProvider):
+    """Serves vectors from ``_REUSE`` and sends only the misses to the wrapped embedder."""
+
+    def __init__(self, inner: EmbeddingProvider):
+        self.inner, self.hits, self.misses = inner, 0, 0
+
+    @property
+    def dimension(self) -> int:
+        return self.inner.dimension
+
+    @property
+    def providerName(self) -> str:
+        return self.inner.providerName
+
+    @property
+    def modelName(self) -> str:
+        return self.inner.modelName
+
+    async def encodeBatch(self, texts: List[str]) -> List[List[float]]:
+        known = {t: _REUSE[t] for t in texts if t in _REUSE}  # taken before any await
+        missing = [t for t in dict.fromkeys(texts) if t not in known]
+        fresh = dict(zip(missing, await self.inner.encodeBatch(missing))) if missing else {}
+        self.hits += len(texts) - len(missing)
+        self.misses += len(missing)
+        return [known[t].tolist() if t in known else fresh[t] for t in texts]
+
+    async def encodeQuery(self, text: str) -> List[float]:
+        return await self.inner.encodeQuery(text)
+
+
+def _rememberVectors(store, ns: str, dim: int, encryptionKey) -> List[str]:
+    """Cache the namespace's chunk vectors by text before it is purged and rebuilt; returns the texts.
+
+    ``KORMEM_REUSE_FROM`` names another index (read-only), e.g. the store this run's home was copied
+    from, whose vectors are used too: an interrupted rebuild has already purged its own.
+    """
+    import os
+    import sqlite3
+    from kormem.store.sqlite_store import _unpackEmbedding
+    sql = ("SELECT * FROM segments WHERE namespaceId=? AND kind='segment' "
+           "AND embedding IS NOT NULL AND embeddingDim=?")
+    with store._connectIndex() as conn:
+        rows = conn.execute(sql, (ns, dim)).fetchall()
+    if os.environ.get("KORMEM_REUSE_FROM"):
+        src = sqlite3.connect(f"file:{os.environ['KORMEM_REUSE_FROM']}?mode=ro", uri=True)
+        src.row_factory = sqlite3.Row
+        try:
+            rows += src.execute(sql, (ns, dim)).fetchall()
+        finally:
+            src.close()
+    texts = []
+    for r in rows:
+        text = store.getSegmentText(r, encryptionKey)
+        if text:
+            _REUSE[text] = _unpackEmbedding(r["embedding"], r["embeddingDim"]).astype("float32")
+            _REFS[text] = _REFS.get(text, 0) + 1
+            texts.append(text)
+    return texts
+
 
 async def buildOne(item: Dict[str, Any], chats: ChatSessionService, extraction: ExtractionService,
                    fresh: bool = False) -> Dict[str, int]:
     ns = f"{NAMESPACE_PREFIX}{item['question_id'].lower()}"
     store = chats.store
+    cached: List[str] = []
     ids = item.get("haystack_session_ids") or [f"s{i}" for i in range(len(item["haystack_sessions"]))]
     with store._connectIndex() as conn:
         have = {r["sessionId"] for r in conn.execute(
@@ -46,6 +113,9 @@ async def buildOne(item: Dict[str, Any], chats: ChatSessionService, extraction: 
             conn.commit()
         ids = []
     else:
+        if not fresh:
+            cached = _rememberVectors(store, ns, chats.ingest.embedder.dimension, chats.config.encryptionKey)
+            logger.info("%s: %d chunk vectors kept for reuse", ns, len(cached))
         store.purgeNamespace(ns)
         shutil.rmtree(vaultDir(ns), ignore_errors=True)
         store.ensureNamespace(ns)
@@ -53,6 +123,11 @@ async def buildOne(item: Dict[str, Any], chats: ChatSessionService, extraction: 
         await chats.append(ns, sid, [{"role": t.get("role"), "content": t.get("content")} for t in turns],
                            sessionDate=date)
         chats.close(ns, sid)
+    for text in cached:
+        _REFS[text] -= 1
+        if not _REFS[text]:
+            del _REFS[text]
+            _REUSE.pop(text, None)
     jobs = 0
     while True:
         n = await extraction.processPending(limit=3, namespaceId=ns)
@@ -82,6 +157,7 @@ async def main() -> int:
         items = [it for it in items if it["question_id"].lower() in wanted]
     config = loadConfig()
     ingest = IngestService(config=config)
+    ingest.embedder = ReuseEmbedder(ingest.embedder)
     chats = ChatSessionService(ingest=ingest, config=config)
     extraction = ExtractionService(store=ingest.store, config=config)
     ingest.store.requeueStaleExtractions()  # jobs a killed run left half-done
@@ -101,6 +177,7 @@ async def main() -> int:
 
     await asyncio.gather(*[bounded(it) for it in items])
     bad = {q: r for q, r in results.items() if r.get("error") or r.get("failed")}
+    logger.info("chunk vectors reused %d, embedded %d", ingest.embedder.hits, ingest.embedder.misses)
     print(json.dumps({"built": len(results) - len(bad), "problems": bad}, indent=2))
     return 0 if not bad else 1
 

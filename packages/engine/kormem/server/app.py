@@ -16,6 +16,7 @@ from fastapi import FastAPI, HTTPException
 from kormem import __version__
 from kormem.connectors.service import ConnectorService
 from kormem.core.config import apiKeysSet, ensureKormemLayout, getKormemHome, loadConfig, loadEnvFile
+from kormem.core.models import snapshot as modelSnapshot
 from kormem.embeddings.reembed import reembedPending, switchIfNeeded
 from kormem import library
 from kormem.core.schemas import (
@@ -141,7 +142,7 @@ def createApp() -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
-        return {"status": "ok", "version": __version__, "keys": apiKeysSet()}
+        return {"status": "ok", "version": __version__, "keys": apiKeysSet(), "models": modelSnapshot(config)}
 
     @app.get("/status")
     async def status(namespaceId: Optional[str] = None) -> StatusResponse:

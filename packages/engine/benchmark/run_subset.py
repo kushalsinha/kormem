@@ -49,6 +49,7 @@ Sources:
 - RECALL FINDINGS are dated facts a recall agent collected by reading the sessions and notes, with quotes. Use them as a checklist of instances and dates, and confirm each against the transcripts.
 - VAULT NOTES are topic notes built from all past conversations: current facts, a dated timeline and what the assistant suggested. They help you see every instance, but if a note conflicts with a transcript, trust the transcript.
 - RELEVANT MEMORY holds dated lines extracted from the conversations. Like the notes, they can be incomplete.
+- A finding, note or memory line saying a detail was "not stated", "not specified" or "unknown" is not evidence: it describes one source only. Search every transcript for the detail before you rely on such a line.
 - Relative dates in user turns are resolved in brackets, e.g. "three weeks ago [2023-05-07]"; "≈" marks approximate ones.
 
 Output format:
@@ -69,7 +70,7 @@ Rules:
 8. Preference / recommendation questions: give a specific, personalised suggestion grounded in the user's stated tastes, routines and past experiences. Do not answer "I don't know".
 9. "Did I do X with Y" questions: if the event is recorded without Y, answer that it was not with Y rather than abstaining.
 10. Mismatched details: if the question describes an event slightly differently from the transcripts (different wording, a minor attribute such as a person's description, an approximate date), answer about the matching event. But never substitute a different entity for the one asked about (tennis is not table tennis; a different store, person, city or course is not the one asked about). Only treat the question as a false premise when its core subject clearly never happened or is contradicted (e.g. asks about "my job as a nurse" when the user was always a teacher); then reply "I don't know — you mentioned <actual fact>, not <premise>."
-11. Missing information: if the event is recorded but the specific detail asked for (a number, a place, a price) is never stated, say "I don't know" and say what was mentioned — never guess or fill it in from general knowledge. If a "how many X" or "did I X" question finds no instance of X at all, answer "You didn't mention any X" (for the period asked), rather than a bare "I don't know" or a bare number.
+11. Missing information: before saying "I don't know", try to derive the answer from what IS stated: subtract or add stated durations, dates and amounts ("lived in the city 5 years, moved to this flat 2 years after arriving" gives 3 years in the flat), compute a difference between two stated values, and apply a stated rate to a stated amount. If the question's relative date ("last Friday") is off from the only matching event of that kind by a few days, answer about that event and give its date. When you derive or match, give the answer plainly, with no hedge. Only if the detail can neither be found nor derived from stated facts, say "I don't know" and say what was mentioned — never guess or fill it in from general knowledge. If a "how many X" or "did I X" question finds no instance of X at all, answer "You didn't mention any X" (for the period asked), rather than a bare "I don't know" or a bare number.
 12. Do not cite sources or add disclaimers.
 
 [RELEVANT MEMORY — extracted notes; lines may carry (meaning DATE) or (estimated DATE) anchors]
@@ -136,8 +137,10 @@ async def _recallContext(pipeline, item: Dict[str, Any]) -> Dict[str, Any]:
     cachePath = Path(_CONTEXT_CACHE) / f"{qid}.json" if _CONTEXT_CACHE else None
     if cachePath and cachePath.exists():
         return json.loads(cachePath.read_text())
+    t0 = time.monotonic()
     ctx = await pipeline.recall(item["question"], f"{NAMESPACE_PREFIX}{qid}", item.get("question_date"),
                                 effort=_RECALL_EFFORT)
+    ctx.debug["recallSec"] = round(time.monotonic() - t0, 2)
     from kormem.extract.lessons import lessonsFor
     from kormem.vault.vault_store import VaultStore
     vault = VaultStore(store=pipeline.store, config=pipeline.config, namespaceId=f"{NAMESPACE_PREFIX}{qid}")

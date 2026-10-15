@@ -2,8 +2,8 @@
 
 Vectors from different models can't be compared, and two models can share a
 dimension (local ``bge-base`` and Gemini are both 768-d), so a switch is never
-mixed in: when the provider changes (a Gemini key added or removed), every
-vector is dropped at engine start and the background worker re-embeds the
+mixed in: when the provider, model or dimension changes (a Gemini key added
+or removed, or ``kormem model set embedding``), every vector is dropped at engine start and the background worker re-embeds the
 index with the new model. Keyword search works throughout; vector search
 covers more of the index as the re-embed progresses.
 """
@@ -15,30 +15,32 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from kormem.core.config import (
-    KormemConfig, getEmbeddingPinPath, loadConfig, selectedEmbeddingProvider,
-)
+from kormem.core.config import KormemConfig, getEmbeddingPinPath, loadConfig
+from kormem.core.models import embeddingIdentity
 from kormem.embeddings.provider import getEmbeddingProvider, getInternalEmbedder
 
 logger = logging.getLogger(__name__)
 
 
 def switchIfNeeded(store, config: KormemConfig, home: Optional[Path] = None) -> Optional[str]:
-    """Drop the vectors when the selected provider differs from the one that built them.
+    """Drop the vectors when the selected embedding model differs from the one that built them.
 
-    Returns the previous provider when it switched. The pin is written after the
-    reset, so a crash in between re-runs the reset rather than mixing models.
+    The pin holds ``provider:model:dim``. Returns the previous pin when it switched. The pin is
+    written after the reset, so a crash in between re-runs the reset rather than mixing models.
     """
-    selected = selectedEmbeddingProvider(config)
+    selected = embeddingIdentity(config)
     pin = getEmbeddingPinPath(home)
-    previous = pin.read_text(encoding="utf-8").strip() if pin.exists() else None
+    recorded = pin.read_text(encoding="utf-8").strip() if pin.exists() else None
+    previous = recorded
+    if recorded and ":" not in recorded and recorded == selected.split(":")[0]:
+        previous = selected  # a provider-only pin from 0.1.x: same provider, same defaults
     switched = None
     if previous and previous != selected:
         n = store.resetEmbeddings()
         logger.info("embeddings switched from %s to %s: re-embedding %d vectors in the background",
                     previous, selected, n)
         switched = previous
-    if previous != selected:
+    if recorded != selected:
         pin.parent.mkdir(parents=True, exist_ok=True)
         pin.write_text(selected + "\n", encoding="utf-8")
     return switched

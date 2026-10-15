@@ -8,10 +8,20 @@ All notable changes to kormem are recorded here. The format follows [Keep a Chan
 
 - Community and governance files: CONTRIBUTING, Code of Conduct, Security policy, issue and pull request templates, CODEOWNERS and Dependabot configuration.
 - Benchmark: session-level retrieval recall (R@5) with MemPalace for comparison, `benchmark/retrieval_recall.py` to reproduce it, and source links for every compared system.
+- `kormem model`: shows the model behind extraction, recall and embeddings with the recommended setup; `kormem model set` changes one. An embedding change warns, asks for confirmation and re-embeds the index.
+- OpenAI embeddings: `kormem model set embedding text-embedding-3-small` (or `-3-large`), shortened to the index's 768 dimensions.
+- `benchmark/recall_only.py`: retrieval-only LongMemEval check (R@k and gold sessions in the answer context), no answer model or judge.
 
 ### Changed
 
 - `scripts/release.sh` stages the npm release (`npm stage publish`); approve it on npmjs.com to publish.
+- `gpt-6-luna` is the default for extraction and recall whenever `OPENAI_API_KEY` is set; Gemini runs them only when its key is the only one.
+- One key: with `OPENAI_API_KEY` set, embeddings default to `text-embedding-3-small` (`embeddingProvider: auto`); Gemini embeddings are used when its key is the only one or when chosen with `kormem model set embedding`. Configs that already name a provider keep it, so existing indexes are not re-embedded. On 60 LongMemEval questions it matched `gemini-embedding-2` on retrieval (all@5 95.0% for both) at a tenth of the price.
+- The engine re-embeds when the embedding model or dimension changes, not only the provider.
+- Recall ranks sources by reciprocal rank fusion of the cross-encoder with memory-line, chunk-search and note-link signals, instead of the cross-encoder alone.
+- The recall agent also returns sources holding a superseded value and every source behind one item of a count.
+- Benchmark answer prompt: derive a detail from stated facts (durations, differences, rates, a nearby dated event) before answering "I don't know"; treat "not stated" lines in notes and memory as non-evidence.
+- Benchmark results: LongMemEval-S on the current architecture, 94.4% (472/500) with Claude Sonnet 5.5, 93.8% with GPT-6.1 Sol, 93.6% with GPT-6 Astra; R@5 99.8%, all gold sessions in top 5 95.8%.
 
 ## [0.1.1]
 
