@@ -19,7 +19,7 @@ claude plugin marketplace add kushalsinha/kormem
 claude plugin install kormem@kormem
 ```
 
-API keys go in `~/.kormem/.env`, so the hooks and the MCP server see them however Claude Code was started. The plugin adds the MCP server, the three hooks below and a `kormem` skill that tells Claude when to recall and how to open sources. To set things up by hand instead, use the two sections below.
+API keys go in `~/.kormem/.env` (`OPENAI_API_KEY` runs extraction, recall and embeddings; `kormem model` explains the setup), so the hooks and the MCP server see them however Claude Code was started. The plugin adds the MCP server, the three hooks below and a `kormem` skill that tells Claude when to recall and how to open sources. To set things up by hand instead, use the two sections below.
 
 ## 1. Hooks: remember your sessions
 

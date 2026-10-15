@@ -56,6 +56,7 @@ SKIP_SECOND_PROB = 0.5
 # topic notes' current facts and source search, so recall cost stays flat as memory grows.
 MEMORY_SCAN_MONTHS = int(os.environ.get("KORMEM_MEMORY_SCAN_MONTHS", "12"))
 MIN_CURRENT_NOTES = 2           # archived notes join the candidates only when fewer current notes match
+RRF_K = 60                      # reciprocal rank fusion constant (the standard value, not tuned)
 _AGGREGATION_RE = re.compile(
     r"\b(how many|how much|in total|total|altogether|combined|order of|from earliest|from first|"
     r"list|all the|each|every|sum|average|first|last|latest|before|after|since|ago|when)\b", re.I)
@@ -202,22 +203,29 @@ class RecallPipeline:
         archived = [m["title"] for m, _ in noteHits if m.get("para") == "archive"]
         topNotes = (current + (archived if len(current) < MIN_CURRENT_NOTES else []))[:6]
 
-        prior: Dict[str, float] = {}
+        # First-pass signals, kept apart so each ranks the candidates on its own.
+        memSig: Dict[str, float] = {}   # best matching memory line
+        segSig: Dict[str, float] = {}   # chunk search, rank-weighted
+        noteSig: Dict[str, float] = {}  # links from the best-matching notes
         excerpt: Dict[str, str] = {}
         for i in lineOrder[:25]:
             if lineSrc[i]:
-                prior[lineSrc[i]] = max(prior.get(lineSrc[i], 0.0), float(lineScores[i]))
+                memSig[lineSrc[i]] = max(memSig.get(lineSrc[i], 0.0), float(lineScores[i]))
         for rank, it in enumerate(segItems):
             s = byDoc.get(it.documentId or "")
             if s:
-                prior[s.sid] = prior.get(s.sid, 0.0) + 1.0 / (rank + 3)
+                segSig[s.sid] = segSig.get(s.sid, 0.0) + 1.0 / (rank + 3)
                 excerpt.setdefault(s.sid, it.text[:500])
         for title in topNotes:
             note = vault.readNote(title)
             for link in re.findall(r"\[\[([^\]]+)\]\]", note.body if note else ""):
                 s = byNote.get(link.lower())
                 if s:
-                    prior[s.sid] = prior.get(s.sid, 0.0) + 0.05
+                    noteSig[s.sid] = noteSig.get(s.sid, 0.0) + 0.05
+        prior: Dict[str, float] = {}
+        for sig in (memSig, segSig, noteSig):
+            for sid, v in sig.items():
+                prior[sid] = prior.get(sid, 0.0) + v
 
         candidates = sources if len(sources) <= SCORE_ALL_SOURCES else [bySid[k] for k in prior]
         linesBySrc: Dict[str, List[int]] = {}
@@ -232,7 +240,16 @@ class RecallPipeline:
 
         previews = [preview(s) for s in candidates]
         ce = await self._crossScores(query, previews)
-        ranked = sorted(zip(candidates, ce, previews), key=lambda x: (-x[1], -prior.get(x[0].sid, 0.0)))
+        # Reciprocal rank fusion of the cross-encoder with the first-pass signals: the cross-encoder
+        # alone favours the one session that states the answer and drops earlier values and partial
+        # instances, which counts and "previous value" questions need.
+        ceOf = {s.sid: c for s, c in zip(candidates, ce)}
+        fused: Dict[str, float] = {s.sid: 0.0 for s in candidates}
+        for sig in (ceOf, memSig, segSig, noteSig):
+            order = sorted((sid for sid in fused if sid in sig), key=lambda sid: -sig[sid])
+            for rank, sid in enumerate(order):
+                fused[sid] += 1.0 / (RRF_K + rank + 1)
+        ranked = sorted(zip(candidates, ce, previews), key=lambda x: (-fused[x[0].sid], -x[1]))
         shortlist = [s for s, _, _ in ranked[:shortlistN]]
         previewOf = {s.sid: p for s, _, p in ranked}
 
@@ -332,7 +349,7 @@ class RecallPipeline:
         findings: List[str] = []
         chosen: List[Source] = []
         notesRead: List[str] = []
-        skip = self._skipReason(query, [sigmoidScore(c) for _, c, _ in ranked[:2]])
+        skip = self._skipReason(query, [sigmoidScore(c) for c in sorted(ce, reverse=True)[:2]])
         if skip:
             agentDebug = {"skipped": skip}
         else:
@@ -381,5 +398,8 @@ class RecallPipeline:
                       "text": resolveRelativeDates(self._text(s), s.date)} for s in picked],
             findings=findings,
             debug={"effort": effort, "nSources": len(sources), "shortlist": [s.sid for s in shortlist],
+                   "candidates": [{"sid": s.sid, "title": s.title, "date": s.dateStr, "crossEncoder": round(c, 3),
+                                   "prior": round(prior.get(s.sid, 0.0), 3), "fused": round(fused[s.sid], 5)}
+                                  for s, c, _ in ranked[:30]],
                    "selected": [s.sid for s in picked], "agent": agentDebug, "sourceChars": used},
         )

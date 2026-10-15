@@ -23,27 +23,30 @@ flowchart LR
 
 ## Benchmark
 
-[LongMemEval-S](https://arxiv.org/abs/2410.10813), all 500 questions, scored by the official GPT-4o judge (`evaluate_qa.py`). Each question gets one answer from a curated context of about 19k tokens.
+[LongMemEval-S](https://arxiv.org/abs/2410.10813), all 500 questions, scored by the official GPT-4o judge (`evaluate_qa.py`). Each question gets one answer from the current architecture (linked vault and recall agent; about 8 full sessions, ~32k tokens of context). All three Kormem rows answer from the same cached contexts.
 
 | System | Answer model | Accuracy |
 |---|---|---|
 | [Mastra Observational Memory](https://mastra.ai/research/observational-memory) | gpt-5-mini | 94.9% |
 | **Kormem** | **Claude Sonnet 5.5** | **94.4%** |
-| **Kormem** | **GPT-6.1 Sol** | **94.0%** |
+| **Kormem** | **GPT-6.1 Sol** | **93.8%**¹ |
+| **Kormem** | **GPT-6 Astra** | **93.6%** |
 | [Mem0 platform](https://github.com/mem0ai/memory-benchmarks) | GPT-5 (custom judge) | 93.4–94.4% |
 | [gbrain](https://github.com/garrytan/gbrain) | Claude Sonnet 4.6 | 86.6% |
 | [Supermemory](https://supermemory.ai/research/longmembench) | Gemini 3 Pro | 85.2% |
 | [Zep](https://arxiv.org/abs/2501.13956) | GPT-4o | 71.2% |
 
-Other systems' numbers are self-reported; see the [full report](docs/benchmarks/longmemeval.md) for setups and caveats. The answer model accounts for much of the spread: on identical context, Kormem ranges from 88.0% (Grok 4.7) to 94.4% (Sonnet 5.5).
+¹ 461/500 in the full run; re-answering its 39 misses with the revised answer prompt (derive from stated facts before saying "I don't know") fixed 8, for 469/500. Details in the [full report](docs/benchmarks/longmemeval.md).
+
+Other systems' numbers are self-reported; see the [full report](docs/benchmarks/longmemeval.md) for setups and caveats. On identical context, Kormem ranges from 93.6% (Astra) to 94.4% (Sonnet 5.5); any of the three answers 481/500.
 
 MemPalace publishes only retrieval recall (R@5: a gold session in the top 5), not answer accuracy, so it gets its own table. Same 500 questions, session level:
 
 | System | LLM in ranking | R@5 | All gold sessions in top 5 |
 |---|---|---|---|
+| **Kormem** | **yes** | **99.8%** | **95.8%** |
 | [MemPalace](https://github.com/mempalace/mempalace) hybrid v4 + LLM rerank | yes | 99.2% | 89.8% |
 | [MemPalace](https://github.com/mempalace/mempalace) hybrid v4 (held-out 450) | no | 98.4% | 88.7% |
-| **Kormem** | **yes** | **97.8%** | **76.0%** |
 | [MemPalace](https://github.com/mempalace/mempalace) raw | no | 96.6% | 85.0% |
 
 MemPalace figures are recomputed from its committed per-question results; method in the [full report](docs/benchmarks/longmemeval.md#retrieval-recall).
@@ -97,15 +100,30 @@ kormem lessons                              # what you've told assistants about 
 - **Maintenance**: merges, condenses and archives notes once a day.
 - **Claude Code**: if `claude` is installed, the plugin (MCP server, session hooks, recall skill). Skip with `--skip-agents`.
 
-kormem needs one key. `GEMINI_API_KEY` ([get one](https://aistudio.google.com/apikey)) runs everything: embeddings (`gemini-embedding-2`), extraction into the vault and the recall agent (`gemini-3.8-flash`). Without it, kormem still indexes and searches, with local embeddings (`BAAI/bge-base-en-v1.5`), but nothing is filed into the vault and `query` returns ranked notes and sources without agent findings.
-
-Prefer OpenAI for extraction and recall? Set `OPENAI_API_KEY` instead. It is used when it is the only key, or when `KORMEM_EXTRACTION_MODEL` / `KORMEM_RECALL_MODEL` name a `gpt-*` model.
-
-Keys already set in your environment win over the file. Add or remove a key later and the next `kormem` command restarts the engine with the change. `kormem doctor` shows what is set.
-
-Vectors from different models can't be compared, so when the embedding provider changes (say you add `GEMINI_API_KEY` after indexing locally), kormem drops the old vectors and re-embeds everything in the background. Keyword search works throughout; `kormem status` shows how many chunks are still waiting.
-
 The npm package is a small launcher. On first run it installs the matching `kormem` Python package into `~/.kormem/engine`, using [uv](https://docs.astral.sh/uv/) if you have it (it fetches Python for you), otherwise Python 3.11+ with pip. After that, a command starts in about 0.1 s.
+
+### Models and keys
+
+Kormem uses models for three jobs: **extraction** (filing what you add into the vault), **recall** (query rewriting and the recall agent behind `kormem query`) and **embeddings** (semantic search). The answer itself comes from your assistant's own model (Claude Code, Cursor, ...); kormem only finds the context.
+
+| Setup | Keys in `~/.kormem/.env` | Extraction and recall | Embeddings |
+|---|---|---|---|
+| **Recommended** | `OPENAI_API_KEY` | `gpt-6-luna` | `text-embedding-3-small` |
+| Gemini only | `GEMINI_API_KEY` | `gemini-3.8-flash` (works, costs more to run) | `gemini-embedding-2` |
+| No key | none | off: nothing is filed into the vault and `query` returns ranked notes and sources without agent findings | local |
+
+One OpenAI key runs everything: `gpt-6-luna` for extraction and recall, which run in the background all day, and `text-embedding-3-small` for embeddings. On 60 LongMemEval questions, `text-embedding-3-small` matched `gemini-embedding-2` on retrieval (all gold sessions in the top 5 for 95.0% with both) at a tenth of the price ($0.02 vs $0.20 per million tokens). To use Gemini embeddings instead, add `GEMINI_API_KEY` and run `kormem model set embedding gemini-embedding-2`. Every embedding option stores 768-d vectors, about 0.8 KB each, and kormem embeds only text.
+
+```sh
+kormem model                               # each job's model, its key, and this guidance
+kormem model set llm gpt-6-luna            # extraction and recall together
+kormem model set recall gemini-3.8-flash   # or one job; "default" undoes it
+kormem model set embedding gemini-embedding-2     # or text-embedding-3-small, local; re-embeds the index (asks first)
+```
+
+**Pick the embedding model once.** Vectors from different models can't be compared, so changing it (or adding `OPENAI_API_KEY` after indexing locally) drops every vector and re-embeds everything in the background. `kormem model set embedding` shows how many vectors that is and asks before it starts. Keyword search works throughout; `kormem status` shows how many chunks are still waiting.
+
+Keys already set in your environment win over the file, and `KORMEM_EXTRACTION_MODEL` / `KORMEM_RECALL_MODEL` override `kormem model`. Add or remove a key, or change a model, and the next `kormem` command restarts the engine with the change. `kormem doctor` shows what is set.
 
 ### Claude Code
 
@@ -234,6 +252,7 @@ kormem notes links "Deploy process"        # outbound links and backlinks
 ```sh
 kormem status                  # sources, chunks, queues, collections, embedding provider
 kormem doctor                  # install, keys, engine
+kormem model [set <job> <model>] # models for extraction, recall and embeddings
 kormem embed [-f]              # embed what's waiting now; -f re-embeds everything
 kormem cleanup [--vacuum]      # compact the index, no model calls
 kormem maintain [--vacuum]     # cleanup + archive, merge and condense notes (runs daily by itself)
@@ -337,9 +356,10 @@ On a copy of 60 LongMemEval users, a maintenance pass cut the index from 403 MB 
 |---|---|---|
 | `KORMEM_HOME` | `~/.kormem` | Data directory |
 | `KORMEM_NAMESPACE` | `main` | Memory namespace; or `--namespace` on any command |
-| `GEMINI_API_KEY` | unset | The one key: embeddings (`gemini-embedding-2`, 768-d), extraction and the recall agent |
-| `OPENAI_API_KEY` | unset | Optional: OpenAI for extraction and recall instead of Gemini |
-| `KORMEM_EXTRACTION_MODEL` / `KORMEM_QUERY_MODEL` / `KORMEM_RECALL_MODEL` | `gemini-3.8-flash` | Models for extraction, query rewriting and the recall agent |
+| `OPENAI_API_KEY` | unset | Extraction and the recall agent (`gpt-6-luna`) and embeddings (`text-embedding-3-small`, 768-d); the one key you need |
+| `GEMINI_API_KEY` | unset | Optional. Embeddings (`gemini-embedding-2`), extraction and recall when it is the only key |
+| `KORMEM_EMBEDDING_PROVIDER` | `auto` | `auto` (OpenAI, then Gemini, by which key is set), `openai`, `gemini` or `local`; prefer `kormem model set embedding` |
+| `KORMEM_EXTRACTION_MODEL` / `KORMEM_RECALL_MODEL` | from `kormem model` | Override the extraction or recall model (`KORMEM_QUERY_MODEL` is an older name for recall) |
 | `FIRECRAWL_API_KEY` | unset | Page text for URL ingest |
 | `KORMEM_ENV_FILE` | `~/.kormem/.env` | Where keys and settings are read from |
 | `KORMEM_ENGINE_PORT` / `KORMEM_ENGINE_URL` | `8787` | Where the engine listens |

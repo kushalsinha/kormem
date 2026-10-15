@@ -12,13 +12,15 @@ import yaml
 DEFAULT_NAMESPACE = "main"
 DEFAULT_EMBEDDING_DIM = 768
 DEFAULT_EMBEDDING_MODEL = "gemini-embedding-2"
+DEFAULT_OPENAI_EMBED_MODEL = "text-embedding-3-small"
 DEFAULT_LOCAL_EMBED_MODEL = "BAAI/bge-base-en-v1.5"
 # Embeddings for kormem's own ranking (notes, memory lines, folders). "auto": the
-# configured provider (Gemini) when it is available, else this local model.
+# configured API provider (OpenAI or Gemini) when it is available, else this local model.
 DEFAULT_INTERNAL_EMBED_MODEL = "auto"
 LOCAL_INTERNAL_EMBED_MODEL = "BAAI/bge-small-en-v1.5"
 INTERNAL_EMBED_DIMS = {"BAAI/bge-small-en-v1.5": 384, "BAAI/bge-base-en-v1.5": 768}
-DEFAULT_EMBEDDING_PROVIDER = "gemini"
+# "auto": OpenAI when its key is set, else Gemini when its key is set, else local.
+DEFAULT_EMBEDDING_PROVIDER = "auto"
 DEFAULT_ENGINE_PORT = 8787
 DEFAULT_RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 DEFAULT_QUERY_MODEL = ""  # empty: pick by available key (see extract.llm_client)
@@ -55,15 +57,19 @@ def getEnvPath(home: Optional[Path] = None) -> Path:
 API_KEYS = ("GEMINI_API_KEY", "OPENAI_API_KEY", "FIRECRAWL_API_KEY")
 
 ENV_TEMPLATE = """\
-# kormem needs one key: GEMINI_API_KEY runs embeddings, extraction into the
-# vault and the recall agent. Get one at https://aistudio.google.com/apikey
-# Without it, kormem still indexes and searches with a local model.
-# Variables already set in the environment win over this file.
+# OPENAI_API_KEY is the only key kormem needs: gpt-6-luna runs extraction into
+# the vault and the recall agent, and text-embedding-3-small runs embeddings.
+# https://platform.openai.com/api-keys
+OPENAI_API_KEY=
+
+# Optional. GEMINI_API_KEY runs embeddings with gemini-embedding-2 when it is the
+# only key, or after `kormem model set embedding gemini-embedding-2`.
+# Without any key, embeddings run locally (free and private, slower to build).
+# https://aistudio.google.com/apikey
 GEMINI_API_KEY=
 
-# Optional: OpenAI for extraction and recall instead. Used when it is the only
-# LLM key, or with KORMEM_EXTRACTION_MODEL / KORMEM_RECALL_MODEL set to a gpt-* model.
-# OPENAI_API_KEY=
+# `kormem model` shows and changes the model behind each job.
+# Variables already set in the environment win over this file.
 """
 
 
@@ -266,11 +272,24 @@ def getEmbeddingPinPath(home: Optional[Path] = None) -> Path:
 
 
 def selectedEmbeddingProvider(config: KormemConfig) -> str:
-    """The provider the config and keys select: the configured one, Gemini falling back to local."""
-    name = (config.embeddingProvider or "gemini").lower()
+    """The provider the config and keys select: the configured one, an API without its key falling back
+    to local. ``auto`` picks OpenAI, then Gemini, by which key is set."""
+    name = (config.embeddingProvider or DEFAULT_EMBEDDING_PROVIDER).lower()
+    if name == "auto":
+        name = "openai" if config.openaiApiKey else "gemini"
     if name in ("local", "hash"):
         return name
+    if name == "openai":
+        return "openai" if config.openaiApiKey else "local"
     return "gemini" if config.geminiApiKey else "local"
+
+
+def apiEmbeddingModel(config: KormemConfig) -> str:
+    """The API embedding model for the selected provider (``embeddingModel`` names it)."""
+    model = config.embeddingModel or ""
+    if selectedEmbeddingProvider(config) == "openai":
+        return model if model.startswith("text-embedding") else DEFAULT_OPENAI_EMBED_MODEL
+    return model if model.startswith("gemini") else DEFAULT_EMBEDDING_MODEL
 
 
 
