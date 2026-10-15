@@ -4,6 +4,8 @@ All notable changes to kormem are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-15
+
 ### Added
 
 - Community and governance files: CONTRIBUTING, Code of Conduct, Security policy, issue and pull request templates, CODEOWNERS and Dependabot configuration.
@@ -59,6 +61,7 @@ First release.
 - Gemini or local (BAAI/bge-base-en-v1.5) embeddings; OpenAI-powered extraction and recall.
 - Distribution as an npm launcher (`kormem`), a Python package (`kormem` on PyPI) and a JS SDK (`createMemoryStore`).
 
-[Unreleased]: https://github.com/kushalsinha/kormem/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/kushalsinha/kormem/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/kushalsinha/kormem/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/kushalsinha/kormem/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/kushalsinha/kormem/releases/tag/v0.1.0
