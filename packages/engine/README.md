@@ -22,27 +22,28 @@ One key, in `~/.kormem/.env` (`kormem init` creates it): `OPENAI_API_KEY` runs e
 
 ## Benchmark
 
-[LongMemEval-S](https://arxiv.org/abs/2410.10813), all 500 questions, scored by the official GPT-4o judge. Each question gets one answer from a curated context of about 19k tokens.
+[LongMemEval-S](https://arxiv.org/abs/2410.10813), all 500 questions, scored by the official GPT-4o judge (`evaluate_qa.py`). Each question gets one answer from the current architecture (linked vault and recall agent; about 8 full sessions, ~32k tokens of context). All three Kormem rows answer from the same cached contexts.
 
 | System | Answer model | Accuracy |
 |---|---|---|
 | [Mastra Observational Memory](https://mastra.ai/research/observational-memory) | gpt-5-mini | 94.9% |
 | **Kormem** | **Claude Sonnet 5.5** | **94.4%** |
-| **Kormem** | **GPT-6.1 Sol** | **94.0%** |
+| **Kormem** | **GPT-6.1 Sol** | **93.8%** |
+| **Kormem** | **GPT-6 Astra** | **93.6%** |
 | [Mem0 platform](https://github.com/mem0ai/memory-benchmarks) | GPT-5 (custom judge) | 93.4–94.4% |
 | [gbrain](https://github.com/garrytan/gbrain) | Claude Sonnet 4.6 | 86.6% |
 | [Supermemory](https://supermemory.ai/research/longmembench) | Gemini 3 Pro | 85.2% |
 | [Zep](https://arxiv.org/abs/2501.13956) | GPT-4o | 71.2% |
 
-Other systems' numbers are self-reported. Setups and caveats: [full report](https://github.com/kushalsinha/kormem/blob/main/docs/benchmarks/longmemeval.md).
+Other systems' numbers are self-reported. Setups and caveats: [full report](https://github.com/kushalsinha/kormem/blob/main/docs/benchmarks/longmemeval.md). Mem0's figure uses its own, more lenient judge. Re-judging our misses with that judge (same prompt, GPT-5) raises Kormem with Sonnet to **95.6%**, Sol and Astra to 94.4%.
 
 MemPalace publishes only retrieval recall (R@5: a gold session in the top 5), not answer accuracy, so it gets its own table. Same 500 questions, session level:
 
 | System | LLM in ranking | R@5 | All gold sessions in top 5 |
 |---|---|---|---|
+| **Kormem** | **yes** | **99.8%** | **95.8%** |
 | [MemPalace](https://github.com/mempalace/mempalace) hybrid v4 + LLM rerank | yes | 99.2% | 89.8% |
 | [MemPalace](https://github.com/mempalace/mempalace) hybrid v4 (held-out 450) | no | 98.4% | 88.7% |
-| **Kormem** | **yes** | **97.8%** | **76.0%** |
 | [MemPalace](https://github.com/mempalace/mempalace) raw | no | 96.6% | 85.0% |
 
 MemPalace figures are recomputed from its committed per-question results; method in the [full report](https://github.com/kushalsinha/kormem/blob/main/docs/benchmarks/longmemeval.md#retrieval-recall).
