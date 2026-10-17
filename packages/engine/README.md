@@ -22,10 +22,11 @@ One key, in `~/.kormem/.env` (`kormem init` creates it): `OPENAI_API_KEY` runs e
 
 ## Benchmark
 
-[LongMemEval-S](https://arxiv.org/abs/2410.10813), all 500 questions, scored by the official GPT-4o judge (`evaluate_qa.py`). Each question gets one answer from kormem's deep recall (linked vault and recall agent; about 8 full sessions, ~32k tokens of context). All three Kormem rows answer from the same cached contexts.
+[LongMemEval-S](https://arxiv.org/abs/2410.10813), all 500 questions, scored by the official GPT-4o judge (`evaluate_qa.py`) unless marked as Mem0's custom judge. Each question gets one answer from kormem's deep recall (linked vault and recall agent; about 8 full sessions, ~32k tokens of context). All Kormem rows answer from the same cached contexts.
 
 | System | Answer model | Accuracy |
 |---|---|---|
+| **Kormem** | **Claude Sonnet 5.5 (Mem0's custom judge)** | **95.6%** |
 | [Mastra Observational Memory](https://mastra.ai/research/observational-memory) | gpt-5-mini | 94.9% |
 | **Kormem** | **Claude Sonnet 5.5** | **94.4%** |
 | **Kormem** | **GPT-6.1 Sol** | **93.8%** |
