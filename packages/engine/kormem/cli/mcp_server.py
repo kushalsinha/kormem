@@ -31,7 +31,7 @@ def run(namespace: str = "main") -> None:
     @mcp.tool()
     def query(query: str = "", searches: Optional[List[dict]] = None, deep: bool = False) -> str:
         """Recall memory for a question: ranked sources, the topic notes they came from, and source ids
-        (#docid) to open with `get`. Fast (~2 s). Set `deep` for counts, totals, timelines, "what do I
+        (#docid) to open with `get`. Takes a few seconds. Set `deep` for counts, totals, timelines, "what do I
         prefer" and anything spread over many conversations: a recall agent reads further and returns dated
         findings (~30 s). QMD-style `searches` ([{"type": "lex"|"vec"|"hyde", "query": "..."}]) are accepted
         and joined into the question."""

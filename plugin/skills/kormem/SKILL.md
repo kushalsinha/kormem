@@ -1,8 +1,8 @@
 ---
 name: kormem
-description: Recall the user's long-term memory with kormem: past sessions, decisions, preferences, people, projects and indexed notes or documents. Use when the user refers to something from before ("what did we decide", "like last time", "my usual setup"), asks about their own history, asks you to remember something, or when an answer depends on their preferences or earlier work.
+description: 'Recall the user''s long-term memory with kormem: past sessions, decisions, preferences, people, projects and indexed notes or documents. Use when the user refers to something from before ("what did we decide", "like last time", "my usual setup"), asks about their own history, asks you to remember something, or when an answer depends on their preferences or earlier work.'
 license: MIT
-compatibility: Requires the kormem CLI (npm install -g kormem, or pip install kormem; then kormem init).
+compatibility: 'Requires the kormem CLI (npm install -g kormem, or pip install kormem; then kormem init).'
 allowed-tools: Bash(kormem:*), mcp__kormem__*
 ---
 
@@ -24,7 +24,7 @@ links back to the source chat or file it came from.
 
 ## How to recall
 
-1. **`query`** (MCP) or `kormem query "<question>"` first. In about 2 seconds
+1. **`query`** (MCP) or `kormem query "<question>"` first. In a few seconds
    it returns the matching topic notes and sources, each with a rank (1 = most
    relevant), a relevance score and a source id such as `#a1b2c3`. Start from
    the top-ranked sources, but lower ranks can still hold one item of a count
@@ -44,7 +44,7 @@ and want speed rather than the agent.
 ## Commands (CLI)
 
 ```bash
-kormem query "what did we decide about the deploy process?"   # ranked notes and sources, ~2 s
+kormem query "what did we decide about the deploy process?"   # ranked notes and sources
 kormem query "how many times did I change the API key?" --deep  # recall agent, dated findings
 kormem search "blue-green" -n 10                              # fast keyword search
 kormem vsearch "how do we roll back a release"                 # semantic search

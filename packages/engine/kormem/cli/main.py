@@ -26,7 +26,7 @@ Quick start:
   kormem context add kormem://notes "Personal notes and ideas"
   kormem search "project timeline"                fast keyword search
   kormem vsearch "how to deploy"                  semantic search
-  kormem query "what did we decide about X?"      ranked notes + sources (~2 s); --deep runs the recall agent
+  kormem query "what did we decide about X?"      ranked notes + sources; --deep runs the recall agent
   kormem get "#abc123"                             a source by docid, or a note / file by name or path
   kormem remember "I prefer pnpm over npm"        a fact, filed into the vault in the background
   kormem mcp                                      MCP server for Claude Code, Claude Desktop, Cursor
