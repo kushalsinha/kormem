@@ -486,12 +486,14 @@ def cmdDoctor(args) -> None:
     if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("OPENAI_API_KEY")):
         print("              extraction and the recall agent need OPENAI_API_KEY; "
               "query returns its first pass without it")
+    if not os.environ.get("TYPESAFE_API_KEY"):
+        print("              recall ranks locally; TYPESAFE_API_KEY adds Jev ranking (recommended)")
     print("models        see `kormem model`")
     e = _engine(args)
     try:
         e.ensure()
         emb = e.get("/embeddings/status")
-        print(f"engine        {ok(True)} ({e.health().get('version')})")
+        print(f"engine        {ok(True)} ({(e.health() or {}).get('version', 'version unknown')})")
         print(f"embeddings    {emb['provider']} / {emb['model']} / {emb['dimension']}-d")
         if emb.get("storedDims"):
             print(f"index dims    {', '.join(map(str, emb['storedDims']))}")

@@ -15,7 +15,26 @@ If you know [QMD](https://github.com/tobi/qmd), you already know the commands: `
 Paste this into Claude Code, Codex, Cursor or any agent that can run commands:
 
 ```text
-Install kormem, long-term memory for this agent. Run `npm install -g kormem` (or `pip install kormem`), then `kormem init`. In Claude Code, `kormem init` also installs the kormem plugin; if it says it didn't, run `claude plugin marketplace add kushalsinha/kormem`, then `claude plugin install kormem@kormem`. In another agent, run `npx skills add kushalsinha/kormem --skill kormem` and select your agent. Use one installation method. Then ask me to add my OPENAI_API_KEY, and optionally TYPESAFE_API_KEY, to ~/.kormem/.env; don't ask me to paste keys into the chat. You can read the skill at https://github.com/kushalsinha/kormem/blob/main/plugin/skills/kormem/SKILL.md (raw: https://raw.githubusercontent.com/kushalsinha/kormem/main/plugin/skills/kormem/SKILL.md). Then use kormem to recall what I've said, decided and preferred before.
+Install kormem, long-term memory for this agent.
+
+1. Run `npm install -g kormem` (or `pip install kormem`), then `kormem init`.
+2. Add the kormem skill. Use one installation method:
+   - In Claude Code, `kormem init` installs the kormem plugin. If it says it didn't, run
+     `claude plugin marketplace add kushalsinha/kormem`, then
+     `claude plugin install kormem@kormem`.
+   - In another agent, run `npx skills add kushalsinha/kormem --skill kormem` and select
+     your agent.
+3. Ask me to add two keys to ~/.kormem/.env. Don't ask me to paste keys into the chat.
+   - OPENAI_API_KEY (https://platform.openai.com/api-keys): files my chats and documents
+     into memory and runs deep recall.
+   - TYPESAFE_API_KEY (https://typesafe.ai), recommended: Jev ranks what recall returns
+     in about 0.3 s for a tenth of a cent, with no LLM call.
+   Then run `kormem doctor` to check both are set.
+4. Read the skill:
+   https://github.com/kushalsinha/kormem/blob/main/plugin/skills/kormem/SKILL.md
+   (raw: https://raw.githubusercontent.com/kushalsinha/kormem/main/plugin/skills/kormem/SKILL.md)
+
+Then use kormem to recall what I've said, decided and preferred before.
 ```
 
 In Claude Code, the plugin also remembers every session on its own and loads your lessons when the next one starts. Other agents recall through the skill and the `kormem` CLI, and can add the [MCP server](#mcp-server).

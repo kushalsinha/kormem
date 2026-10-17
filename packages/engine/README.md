@@ -4,6 +4,35 @@ Local long-term memory for AI agents. kormem indexes everything you say to assis
 
 The commands follow [QMD](https://github.com/tobi/qmd): `collection add`, `context add`, `search`, `vsearch`, `query`, `get`, `multi-get` and `ls` work the same way.
 
+## Add kormem to your agent
+
+Paste this into Claude Code, Codex, Cursor or any agent that can run commands:
+
+```text
+Install kormem, long-term memory for this agent.
+
+1. Run `npm install -g kormem` (or `pip install kormem`), then `kormem init`.
+2. Add the kormem skill. Use one installation method:
+   - In Claude Code, `kormem init` installs the kormem plugin. If it says it didn't, run
+     `claude plugin marketplace add kushalsinha/kormem`, then
+     `claude plugin install kormem@kormem`.
+   - In another agent, run `npx skills add kushalsinha/kormem --skill kormem` and select
+     your agent.
+3. Ask me to add two keys to ~/.kormem/.env. Don't ask me to paste keys into the chat.
+   - OPENAI_API_KEY (https://platform.openai.com/api-keys): files my chats and documents
+     into memory and runs deep recall.
+   - TYPESAFE_API_KEY (https://typesafe.ai), recommended: Jev ranks what recall returns
+     in about 0.3 s for a tenth of a cent, with no LLM call.
+   Then run `kormem doctor` to check both are set.
+4. Read the skill:
+   https://github.com/kushalsinha/kormem/blob/main/plugin/skills/kormem/SKILL.md
+   (raw: https://raw.githubusercontent.com/kushalsinha/kormem/main/plugin/skills/kormem/SKILL.md)
+
+Then use kormem to recall what I've said, decided and preferred before.
+```
+
+## Commands
+
 ```sh
 pip install kormem            # or: uvx kormem …, npm install -g kormem, bunx kormem …
 kormem init                   # key file, engine, background services, Claude Code plugin
