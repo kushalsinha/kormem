@@ -61,7 +61,7 @@ Claude Desktop: add the same server to `~/Library/Application Support/Claude/cla
 
 | Tool | What it does |
 |---|---|
-| `query` | Findings with dates, the topic notes and the source chats or documents behind them (as `#docid`). A recall agent walks the vault's links; `deep: true` spends more effort on counting and timeline questions. |
+| `query` | The topic notes and the source chats or documents a question needs (as `#docid`), each source with its rank and relevance, in about 2 s. `deep: true` runs a recall agent that walks the vault's links and adds dated findings, for counting, timeline and preference questions. |
 | `get` | Open a source by `#docid`, a note by title, or a file by `kormem://` address. `"#abc123:120:40"` reads lines 120–159. |
 | `multi_get` | Several notes or sources by glob or comma-separated list. |
 | `search` | Fast keyword or vector search over chunks, no agent. |
@@ -82,7 +82,7 @@ kormem maintain                                          # tidy memory now (also
 
 ## Cost
 
-Indexing uses embeddings only. Extraction makes one model call per settled source, which files knowledge, lessons and memory lines into the vault. Recall shortlists sources with a local cross-encoder for free, then runs the recall agent at low reasoning effort for CLI and MCP use.
+Indexing uses embeddings only. Extraction makes one model call per settled source, which files knowledge, lessons and memory lines into the vault. Recall shortlists sources with a local cross-encoder for free; with `TYPESAFE_API_KEY` set, Jev re-ranks the top 30 by their previews (about $0.001 a question). The recall agent runs only for `deep` queries.
 
 ## Keeping memory small
 

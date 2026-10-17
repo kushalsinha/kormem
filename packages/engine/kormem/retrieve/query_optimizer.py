@@ -306,7 +306,7 @@ Output: ["How to deploy to AWS?"]"""
         complexity = QueryComplexity.COMPLEX if forceComplex else self.classifyQuery(query)
         isPersonal = self._isPersonalMemory(query)
 
-        if not self._hasLlm() or not self.config.queryOptimize:
+        if not self._hasLlm() or not self.config.queryRewrite:
             return QueryOptimizationResult(
                 originalQuery=query,
                 queryVariants=self._expandQuery(query)[: self.maxVariants],

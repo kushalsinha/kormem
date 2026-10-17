@@ -4,6 +4,16 @@ All notable changes to kormem are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+### Added
+
+- Jev re-ranking in recall. With `TYPESAFE_API_KEY` set, Jev (`jev-1.13.0`) scores the previews of the first pass's top 30 sources in parallel (about 0.2 s, $0.001 a question), and its ranking is fused with the local one. On all 500 LongMemEval questions, every needed session was in the top 5 for 97.8% of questions, up from 95.6%. Short previews of matching sources are sent to TypeSafe; without the key, ranking stays local. `kormem model set decision` picks the Jev model.
+- Every source `/recall` returns carries `rank` (1 = most relevant), `relevance` (Jev's probability) and `agentChose`. MCP `query`, `kormem query` and the benchmark prompt show them, with a note to start from the top-ranked sources.
+
+### Changed
+
+- `kormem query` and MCP `query` no longer run the recall agent by default. They return the top 8 sources in about 2 s, dropping ranks 6–8 that Jev scores below 0.3. `--deep` (MCP `deep: true`, API `effort: "high"`) runs the recall agent from a 12-source shortlist; `"medium"` is still accepted and means `"high"`. The benchmark default is `high`.
+- The query rewrite before chunk search (rewrite, HyDE, sub-questions) is off. It added about 5 s per query and did not change recall on LongMemEval. The setting is now `queryRewrite` (default `false`); the old `queryOptimize` key, which 0.1.x wrote into every config, is ignored.
+
 ## [0.1.2] - 2026-10-15
 
 ### Added

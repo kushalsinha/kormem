@@ -27,8 +27,9 @@ Environment variables:
 |---|---|---|
 | `KORMEM_ANSWER_MODEL` | `gpt-6.1-sol` | Answer model. Names starting `gpt-`, `gemini-`, `grok-` or `claude-` go to that provider's API. |
 | `KORMEM_ANSWER_REASONING_EFFORT` | `medium` | Reasoning effort; for Claude it maps to an extended-thinking budget. |
-| `KORMEM_RECALL_EFFORT` | `medium` | Recall agent effort (`low` is what the CLI and MCP use). |
+| `KORMEM_RECALL_EFFORT` | `high` | `high` runs the recall agent (the published runs); `low` is the default for the CLI and MCP: Jev-ranked sources, no agent. |
+| `KORMEM_ANSWER_RANKS` | `1` | Show each session's rank and Jev relevance in the answer prompt (contexts saved before 0.1.3 have none). `0` turns it off. |
 | `KORMEM_EXTRACTION_REASONING_EFFORT` | `low` | Reasoning effort for extraction calls. |
 | `KORMEM_CONTEXT_CACHE` | — | Save and reuse each question's recall output, so answer models see identical input. |
 
-API keys are read from the repo-root `.env`: `OPENAI_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY`, and `ANTHROPIC_API_KEY` (plus `ANTHROPIC_WORKSPACE_ID` if your key isn't scoped to a workspace).
+API keys are read from the repo-root `.env`: `OPENAI_API_KEY`, `GEMINI_API_KEY`, `TYPESAFE_API_KEY` (Jev, for recall), `XAI_API_KEY`, and `ANTHROPIC_API_KEY` (plus `ANTHROPIC_WORKSPACE_ID` if your key isn't scoped to a workspace).

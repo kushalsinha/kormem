@@ -9,6 +9,7 @@ from typing import List, Optional
 from kormem import __version__
 from kormem.cli import output as out
 from kormem.cli.client import Engine, EngineError
+from kormem.core.ranks import RANK_NOTE, rankIndex, rankLabel
 
 try:  # mcp >= 2
     from mcp.server.mcpserver import MCPServer as _Server
@@ -29,21 +30,28 @@ def run(namespace: str = "main") -> None:
 
     @mcp.tool()
     def query(query: str = "", searches: Optional[List[dict]] = None, deep: bool = False) -> str:
-        """Recall memory for a question: dated findings, the topic notes they came from, and source ids
-        (#docid) to open with `get`. `deep` spends more effort, for counts and timelines. QMD-style
-        `searches` ([{"type": "lex"|"vec"|"hyde", "query": "..."}]) are accepted and joined into the question."""
+        """Recall memory for a question: ranked sources, the topic notes they came from, and source ids
+        (#docid) to open with `get`. Fast (~2 s). Set `deep` for counts, totals, timelines, "what do I
+        prefer" and anything spread over many conversations: a recall agent reads further and returns dated
+        findings (~30 s). QMD-style `searches` ([{"type": "lex"|"vec"|"hyde", "query": "..."}]) are accepted
+        and joined into the question."""
         q = query or " ".join(str(s.get("query", "")) for s in (searches or []))
         if not q.strip():
             return "Give a question in `query`."
-        r = engine.post("/recall", {"query": q, "namespaceId": namespace, "effort": "medium" if deep else "low"})
+        r = engine.post("/recall", {"query": q, "namespaceId": namespace, "effort": "high" if deep else "low"})
         parts = []
         if r["findings"]:
             parts.append("Findings:\n" + "\n".join(f"- {f}" for f in r["findings"]))
         for n in r["notes"]:
             parts.append(f"Note [[{n['title']}]] ({n['folder']}):\n{n['body'][:2000]}")
+        index = rankIndex(r["sources"], lambda s: s.get("docid") or s["title"])
+        if index:
+            parts.append(f"{RANK_NOTE}\nBy rank:\n{index}")
         for s in r["sources"]:
             ctx = f"\nContext: {s['context']}" if s.get("context") else ""
+            label = rankLabel(s)
             parts.append(f"Source {s.get('docid', '')} · {s['date'][:10]} · {s['title']}"
+                         f"{' · ' + label if label else ''}"
                          f"{' · ' + s['uri'] if s.get('uri') else ''}{ctx}:\n{s['text'][:3000]}")
         if r.get("relevantMemory"):
             parts.append("Memory:\n" + r["relevantMemory"][:4000])

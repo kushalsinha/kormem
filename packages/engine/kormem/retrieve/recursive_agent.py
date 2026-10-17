@@ -40,9 +40,8 @@ from kormem.extract.llm_client import geminiThinking
 logger = logging.getLogger(__name__)
 
 EFFORT = {
-    # effort: (reasoning effort, tool rounds)
-    "low": ("low", 4),
-    "medium": ("medium", 8),
+    # recall effort: (reasoning effort, tool rounds). The agent runs only at high effort.
+    "high": ("medium", 8),
 }
 
 
@@ -254,7 +253,7 @@ async def recursiveRecall(
     tools: Dict[str, ToolFn],
     validSources: set,
     *,
-    effort: str = "low",
+    effort: str = "high",
     model: Optional[str] = None,
     config: Optional[KormemConfig] = None,
 ) -> RecallResult:
@@ -264,7 +263,7 @@ async def recursiveRecall(
     sources and notes); ``tools`` maps tool names to async implementations.
     """
     config = config or loadConfig()
-    reasoning, maxRounds = EFFORT.get(effort, EFFORT["low"])
+    reasoning, maxRounds = EFFORT.get(effort, EFFORT["high"])
     model = model or llmModel("recall", config)[0]
     if "gemini" in model.lower():
         keyName, apiKey = "GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY") or config.geminiApiKey or ""
