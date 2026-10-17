@@ -39,7 +39,7 @@ Most of what a memory system does is decide: is this source relevant to the ques
 
 When your agent asks kormem something, a free local pass (embeddings, keyword search and a cross-encoder on your machine) finds the 30 most likely sources. Jev then reads a short preview of each, all in parallel, and judges whether it helps answer the question, even partly: one item of a count, an earlier value, a date, a stated preference. kormem combines Jev's ranking with the local one, keeps the strongest sources and leaves out the weak ones, and tells your agent each source's rank and relevance so it knows where to look first.
 
-The Jev step takes about 0.3 seconds and costs about a tenth of a cent per question, and no LLM is called. The alternative is a recall agent that reads the sources itself: a little more thorough, but around 30 seconds and several model calls per question. kormem keeps that agent for the questions that need it (`--deep`). Without a `TYPESAFE_API_KEY`, kormem ranks with the local pass alone.
+The Jev step takes about 0.3 seconds and costs about a tenth of a cent per question, and no LLM is called. The alternative is a recall agent that reads the sources itself: a little more thorough, but around 30 seconds and several model calls per question. kormem keeps that agent for the questions that need it (`--deep`). Without a `TYPESAFE_API_KEY`, kormem ranks with the local pass alone. [How we chose this design](docs/research/jev-decisions.md).
 
 ## Benchmark
 
