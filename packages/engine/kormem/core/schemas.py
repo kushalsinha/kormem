@@ -180,7 +180,7 @@ class RecallRequest(BaseModel):
     query: str
     namespaceId: str = "main"
     queryDate: Optional[str] = None
-    effort: Literal["low", "medium"] = "low"   # low: CLI/MCP; medium: deeper agent
+    effort: Literal["low", "medium", "high"] = "low"   # low: Jev-ranked sources; high: recall agent ("medium" = high)
     project: Optional[str] = None              # include this project's lessons
 
 

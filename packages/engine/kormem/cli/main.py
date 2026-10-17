@@ -17,6 +17,7 @@ from kormem import __version__
 from kormem.cli import output as out
 from kormem.cli.client import Engine, EngineError, baseUrl, kormemHome, logPath
 from kormem.core.config import API_KEYS, getEnvPath, loadEnvFile, writeEnvTemplate
+from kormem.core.ranks import RANK_NOTE, rankIndex, rankLabel
 
 QUICK_HELP = """\
 Quick start:
@@ -25,7 +26,7 @@ Quick start:
   kormem context add kormem://notes "Personal notes and ideas"
   kormem search "project timeline"                fast keyword search
   kormem vsearch "how to deploy"                  semantic search
-  kormem query "what did we decide about X?"      recall agent: walks notes + sources (best quality)
+  kormem query "what did we decide about X?"      ranked notes + sources; --deep runs the recall agent
   kormem get "#abc123"                             a source by docid, or a note / file by name or path
   kormem remember "I prefer pnpm over npm"        a fact, filed into the vault in the background
   kormem mcp                                      MCP server for Claude Code, Claude Desktop, Cursor
@@ -111,6 +112,10 @@ def cmdInit(args) -> None:
         model = models.llmModel(role, config)[0]
         key = models.providerKey(models.llmProvider(model) or "openai")
         print(f"{label:13} {model if os.environ.get(key) else f'waiting for {key}'}{what}")
+    decision = models.decisionModel(config)[0]
+    print(f"{'decisions':13} " + (f"{decision} (re-ranks and trims the sources recall returns)"
+                                   if models.decisionKey(config) else
+                                   "local ranking (add TYPESAFE_API_KEY for Jev: sharper context, ~$0.001 a query)"))
     hours = float(os.environ.get("KORMEM_MAINTAIN_HOURS", "24"))
     print(f"maintenance   {f'on (merges, condenses and archives notes every {hours:g} h)' if hours > 0 else 'only on request'}")
     if not args.skip_agents:
@@ -248,7 +253,7 @@ def cmdSearch(args) -> None:
 def cmdQuery(args) -> None:
     fmt = _fmt(args)
     r = _engine(args).post("/recall", {"query": args.query, "namespaceId": args.namespace,
-                                        "effort": "medium" if args.deep else "low", "queryDate": args.date})
+                                        "effort": "high" if args.deep else "low", "queryDate": args.date})
     if fmt == "json":
         return out.printJson(r)
     if fmt == "files":
@@ -263,8 +268,13 @@ def cmdQuery(args) -> None:
             parts.append("## Findings\n\n" + "\n".join(f"- {f}" for f in r["findings"]))
         for n in r["notes"]:
             parts.append(f"## Note: {n['title']} ({n['folder']})\n\n{n['body']}")
+        index = rankIndex(r["sources"], lambda s: s.get("docid") or s["title"])
+        if index:
+            parts.append(f"## Sources by rank\n\n{RANK_NOTE}\n\n{index}")
         for s in r["sources"]:
-            parts.append(f"## Source {s.get('docid', '')} · {s['date'][:10]} · {s['title']}\n\n{s['text']}")
+            label = rankLabel(s)
+            parts.append(f"## Source {s.get('docid', '')} · {s['date'][:10]} · {s['title']}"
+                         f"{' · ' + label if label else ''}\n\n{s['text']}")
         if r.get("relevantMemory"):
             parts.append("## Memory\n\n" + r["relevantMemory"])
         print("\n\n".join(parts) or "No matching memory found.")
@@ -286,12 +296,14 @@ def cmdQuery(args) -> None:
         print(out.bold("\nSources"))
         for s in r["sources"]:
             where = s.get("uri") or ""
-            print(f"  {s.get('docid', ''):8} {s['date'][:10]}  {s['kind']:8} {s['title']}  {out.dim(where)}")
+            label = rankLabel(s)
+            print(f"  {s.get('docid', ''):8} {s['date'][:10]}  {s['kind']:8} {s['title']}  "
+                  f"{out.dim(label + '  ' if label else '')}{out.dim(where)}")
             if s.get("context"):
                 print(out.dim(f"           Context: {s['context']}"))
             if args.full:
                 print("    " + s["text"].replace("\n", "\n    "))
-            elif not r["findings"]:  # the agent was skipped: one source answers a simple lookup
+            elif not r["findings"]:  # no agent ran (default effort, or a simple lookup)
                 text = " ".join(s["text"].split())
                 print(f"           {text[:400]}{'…' if len(text) > 400 else ''}")
     print(out.dim("\nOpen any of these: kormem get <docid | note title>"))
@@ -499,10 +511,13 @@ Recommended setup:
                   text-embedding-3-small for embeddings (768-d, $0.02 per million tokens).
   GEMINI_API_KEY  optional: gemini-embedding-2 ($0.20 per million tokens) when it is the only key,
                   or with `kormem model set embedding gemini-embedding-2`.
+  TYPESAFE_API_KEY  optional: Jev re-ranks and trims the sources `kormem query` returns (~0.2 s,
+                  ~$0.001 a query). Short previews of matching sources are sent to TypeSafe.
   No key: embeddings run locally (free and private; the first index is slower).
   Pick the embedding model once. Changing it re-embeds everything you have indexed.
 
 Change: kormem model set llm|extraction|recall <model>   (gpt-* or gemini-*, or "default")
+        kormem model set decision <model>                (jev-*, or "default")
         kormem model set embedding <model>               (gemini-embedding-2, text-embedding-3-small,
                                                           local or default; re-embeds the whole index)"""
 
@@ -536,6 +551,9 @@ def _showModels(args) -> None:
         key = models.providerKey(provider) if provider else None
         rows.append({"role": role, "model": model, "source": source, "key": key,
                      "keySet": bool(key and os.environ.get(key))})
+    decision, source = models.decisionModel(config)
+    rows.append({"role": "decision", "model": decision, "source": source, "key": "TYPESAFE_API_KEY",
+                 "keySet": bool(models.decisionKey(config))})
     emb = models.embeddingModel(config)
     rows.append({"role": "embedding", "model": emb, "dimension": config.embeddingDim,
                  "key": None if emb.startswith(("local", "hash")) else
@@ -547,7 +565,8 @@ def _showModels(args) -> None:
         if r["role"] == "embedding":
             note = f"{r['dimension']}-d, {r['vectors']:,} vectors"
         else:
-            keyNote = f"{r['key']} {'set' if r['keySet'] else 'MISSING'}" if r["key"] else "unknown provider"
+            missing = "not set: local ranking" if r["role"] == "decision" else "MISSING"
+            keyNote = f"{r['key']} {'set' if r['keySet'] else missing}" if r["key"] else "unknown provider"
             note = f"{r['source']}, {keyNote}"
         print(f"{r['role']:11} {r['model']:28} {out.dim(note)}")
     wanted = (config.embeddingProvider or "auto").lower()
@@ -583,6 +602,22 @@ def _setLlm(roles, value: str, raw: dict) -> None:
                 print(f"warning: {var}={os.environ[var]} is set in the environment and overrides this.",
                       file=sys.stderr)
         print(f"{role:11} {value}")
+
+
+def _setDecision(value: str, raw: dict) -> None:
+    from kormem.core import models
+    if value == "default":
+        raw.pop("decisionModel", None)
+    elif value.lower().startswith("jev"):
+        raw["decisionModel"] = value
+    else:
+        raise EngineError(f"Unknown decision model {value!r}: use a jev-* model (e.g. jev-1.13.0) or 'default'.")
+    if not os.environ.get("TYPESAFE_API_KEY"):
+        print(f"warning: Jev needs TYPESAFE_API_KEY; add it to {getEnvPath()}.", file=sys.stderr)
+    if os.environ.get(models.DECISION_ENV):
+        print(f"warning: {models.DECISION_ENV}={os.environ[models.DECISION_ENV]} is set in the environment "
+              "and overrides this.", file=sys.stderr)
+    print(f"{'decision':11} {value}")
 
 
 def _setEmbedding(value: str, raw: dict, yes: bool) -> bool:
@@ -633,7 +668,7 @@ def _setEmbedding(value: str, raw: dict, yes: bool) -> bool:
 
 
 def cmdModel(args) -> None:
-    """Show or change the model behind each job: extraction, recall and embeddings."""
+    """Show or change the model behind each job: extraction, recall, decisions and embeddings."""
     from kormem.core.config import readRawConfig, writeRawConfig
     if args.sub in (None, "show"):
         return _showModels(args)
@@ -642,6 +677,8 @@ def cmdModel(args) -> None:
     if role == "embedding":
         if not _setEmbedding(value, raw, args.yes):
             return
+    elif role == "decision":
+        _setDecision(value, raw)
     else:
         _setLlm(("extraction", "recall") if role == "llm" else (role,), value, raw)
     writeRawConfig(raw)
@@ -743,10 +780,11 @@ def _parser() -> argparse.ArgumentParser:
         s.add_argument("--full", action="store_true", help="show whole sources")
         s.add_argument("--no-rerank", action="store_true")
 
-    s = add("query", cmdQuery, "recall: the agent walks notes, links and sources (best quality)",
+    s = add("query", cmdQuery, "recall: ranked notes and sources; --deep runs the recall agent",
             parents=(common, fmt), aliases=("deep-search", "recall"))
     s.add_argument("query")
-    s.add_argument("--deep", action="store_true", help="more agent rounds, for counts and timelines")
+    s.add_argument("--deep", action="store_true",
+                   help="run the recall agent (~30 s): counts, timelines, preferences, dated findings")
     s.add_argument("--full", action="store_true", help="show note bodies and source text")
     s.add_argument("--date", help="answer as of this date (YYYY-MM-DD)")
 
@@ -815,13 +853,14 @@ def _parser() -> argparse.ArgumentParser:
 
     add("status", cmdStatus, "index, queue, collections and embedding provider")
     add("doctor", cmdDoctor, "check the install, keys and engine")
-    m = add("model", cmdModel, "show or change the models for extraction, recall and embeddings")
+    m = add("model", cmdModel, "show or change the models for extraction, recall, decisions and embeddings")
     ms = m.add_subparsers(dest="sub")
     ms.add_parser("show", parents=[common], help="each job's model, its key and the recommended setup")
-    a = ms.add_parser("set", parents=[common], help="model set llm|extraction|recall|embedding <model>")
-    a.add_argument("role", choices=("llm", "extraction", "recall", "embedding"),
+    a = ms.add_parser("set", parents=[common], help="model set llm|extraction|recall|decision|embedding <model>")
+    a.add_argument("role", choices=("llm", "extraction", "recall", "decision", "embedding"),
                    help="llm sets extraction and recall together")
-    a.add_argument("model", help='e.g. gpt-6-luna, gemini-3.8-flash, gemini-embedding-2, local, or "default"')
+    a.add_argument("model", help='e.g. gpt-6-luna, gemini-3.8-flash, jev-1.13.0, gemini-embedding-2, local, '
+                                 'or "default"')
     a.add_argument("--yes", action="store_true", help="confirm an embedding change without asking")
     add("mcp", cmdMcp, "MCP server on stdio")
     add("stop", cmdStop, "stop the background engine")

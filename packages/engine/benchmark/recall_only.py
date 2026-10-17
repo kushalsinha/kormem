@@ -75,7 +75,7 @@ async def main() -> int:
     with open(args.subset, encoding="utf-8") as f:
         items = json.load(f)
     pipeline = RecallPipeline()
-    effort = os.environ.get("KORMEM_RECALL_EFFORT", "medium")
+    effort = os.environ.get("KORMEM_RECALL_EFFORT", "high")
     sem = asyncio.Semaphore(args.concurrency)
 
     async def run(item):

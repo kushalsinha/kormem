@@ -1,8 +1,8 @@
 ---
 name: kormem
-description: Recall the user's long-term memory with kormem: past sessions, decisions, preferences, people, projects and indexed notes or documents. Use when the user refers to something from before ("what did we decide", "like last time", "my usual setup"), asks about their own history, asks you to remember something, or when an answer depends on their preferences or earlier work.
+description: 'Recall the user''s long-term memory with kormem: past sessions, decisions, preferences, people, projects and indexed notes or documents. Use when the user refers to something from before ("what did we decide", "like last time", "my usual setup"), asks about their own history, asks you to remember something, or when an answer depends on their preferences or earlier work.'
 license: MIT
-compatibility: Requires the kormem CLI (npm install -g kormem, or pip install kormem; then kormem init).
+compatibility: 'Requires the kormem CLI (npm install -g kormem, or pip install kormem; then kormem init).'
 allowed-tools: Bash(kormem:*), mcp__kormem__*
 ---
 
@@ -24,16 +24,19 @@ links back to the source chat or file it came from.
 
 ## How to recall
 
-1. **`query`** (MCP) or `kormem query "<question>"` first. It runs a recall
-   agent over the vault and returns dated findings, the topic notes they came
-   from and source ids such as `#a1b2c3`. Use `deep: true` (`--deep`) for
-   counts, "how many times", timelines and "what changed".
+1. **`query`** (MCP) or `kormem query "<question>"` first. In a few seconds
+   it returns the matching topic notes and sources, each with a rank (1 = most
+   relevant), a relevance score and a source id such as `#a1b2c3`. Start from
+   the top-ranked sources, but lower ranks can still hold one item of a count
+   or an earlier value. Use `deep: true` (`--deep`) for counts, "how many
+   times", timelines, "what changed" and "what do I prefer": a recall agent
+   reads further (about 30 seconds) and adds dated findings.
 2. Open a source with **`get`** when you need exact wording, numbers or quotes:
    `get("#a1b2c3")`, or a line range with `get("#a1b2c3:120:40")`. Notes open by
    title: `get("Lisbon trip")`.
 3. Answer from what you retrieved, and name the docids or note titles you
-   relied on. Findings are leads with dates; when a detail matters, verify it
-   in the source.
+   relied on. Findings (from `deep`) are leads with dates; when a detail
+   matters, verify it in the source.
 
 Use `search` (keyword) when you know an exact name, code symbol or rare phrase
 and want speed rather than the agent.
@@ -41,8 +44,8 @@ and want speed rather than the agent.
 ## Commands (CLI)
 
 ```bash
-kormem query "what did we decide about the deploy process?"   # recall agent, best quality
-kormem query "how many times did I change the API key?" --deep
+kormem query "what did we decide about the deploy process?"   # ranked notes and sources
+kormem query "how many times did I change the API key?" --deep  # recall agent, dated findings
 kormem search "blue-green" -n 10                              # fast keyword search
 kormem vsearch "how do we roll back a release"                 # semantic search
 kormem get "#a1b2c3"                                           # a source by docid

@@ -25,6 +25,7 @@ DEFAULT_ENGINE_PORT = 8787
 DEFAULT_RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 DEFAULT_QUERY_MODEL = ""  # empty: pick by available key (see extract.llm_client)
 DEFAULT_EXTRACTION_MODEL = ""  # empty: pick by available key (see extract.llm_client)
+DEFAULT_DECISION_MODEL = ""  # empty: jev-1.13.0 (see core.models)
 
 
 def getKormemHome() -> Path:
@@ -54,7 +55,7 @@ def getEnvPath(home: Optional[Path] = None) -> Path:
 
 
 # API keys kormem uses. Their presence decides which services run.
-API_KEYS = ("GEMINI_API_KEY", "OPENAI_API_KEY", "FIRECRAWL_API_KEY")
+API_KEYS = ("GEMINI_API_KEY", "OPENAI_API_KEY", "TYPESAFE_API_KEY", "FIRECRAWL_API_KEY")
 
 ENV_TEMPLATE = """\
 # OPENAI_API_KEY is the only key kormem needs: gpt-6-luna runs extraction into
@@ -67,6 +68,12 @@ OPENAI_API_KEY=
 # Without any key, embeddings run locally (free and private, slower to build).
 # https://aistudio.google.com/apikey
 GEMINI_API_KEY=
+
+# Optional. TYPESAFE_API_KEY lets Jev (jev-1.13.0) re-rank and trim the sources
+# recall returns: better context in about 0.2 s, ~$0.001 per question. Short
+# previews of the matching sources are sent to TypeSafe. Without it, recall
+# ranks locally. https://typesafe.ai
+TYPESAFE_API_KEY=
 
 # `kormem model` shows and changes the model behind each job.
 # Variables already set in the environment win over this file.
@@ -145,11 +152,15 @@ class KormemConfig:
     encryptionKey: Optional[str] = None
     enginePort: int = DEFAULT_ENGINE_PORT
     collections: dict[str, CollectionConfig] = field(default_factory=dict)
-    queryOptimize: bool = True
+    # Rewrite the question with the recall LLM (rewrite, HyDE, sub-questions) before chunk search.
+    # Off: on LongMemEval it added ~5 s per query and did not change recall.
+    queryRewrite: bool = False
     rerankEnabled: bool = True
     rerankModel: str = DEFAULT_RERANK_MODEL
     queryModel: str = DEFAULT_QUERY_MODEL
     extractionModel: str = DEFAULT_EXTRACTION_MODEL
+    decisionModel: str = DEFAULT_DECISION_MODEL
+    typesafeApiKey: Optional[str] = None
     memoryExtractionEnabled: bool = True
 
     @classmethod
@@ -227,11 +238,14 @@ class KormemConfig:
             encryptionKey=data.get("encryptionKey") or os.environ.get("KORMEM_ENCRYPTION_KEY"),
             enginePort=int(data.get("enginePort", DEFAULT_ENGINE_PORT)),
             collections=collections,
-            queryOptimize=bool(data.get("queryOptimize", True)),
+            # 0.1.x wrote `queryOptimize: true` into every config, so that key is not read.
+            queryRewrite=bool(data.get("queryRewrite", False)),
             rerankEnabled=rerankEnabled,
             rerankModel=rerankModel,
             queryModel=queryModel,
             extractionModel=extractionModel,
+            decisionModel=data.get("decisionModel") or DEFAULT_DECISION_MODEL,
+            typesafeApiKey=data.get("typesafeApiKey") or os.environ.get("TYPESAFE_API_KEY"),
             memoryExtractionEnabled=memoryExtractionEnabled,
         )
 
@@ -244,11 +258,12 @@ class KormemConfig:
             "localEmbedModel": self.localEmbedModel,
             "internalEmbedModel": self.internalEmbedModel,
             "enginePort": self.enginePort,
-            "queryOptimize": self.queryOptimize,
+            "queryRewrite": self.queryRewrite,
             "rerankEnabled": self.rerankEnabled,
             "rerankModel": self.rerankModel,
             "queryModel": self.queryModel,
             "extractionModel": self.extractionModel,
+            "decisionModel": self.decisionModel,
             "memoryExtractionEnabled": self.memoryExtractionEnabled,
             "collections": {
                 name: {"path": c.path, "pattern": c.pattern}

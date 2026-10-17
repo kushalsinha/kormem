@@ -2,7 +2,7 @@
 
 Run after ``benchmark.ingest`` has built each question's vault. For every
 question, ``RecallPipeline.recall`` (the same code ``/recall`` runs; effort
-``KORMEM_RECALL_EFFORT``, default medium) returns notes, sources and
+``KORMEM_RECALL_EFFORT``, default high) returns notes, sources and
 findings, the answer model writes notes then an ``ANSWER:`` line, and
 kormem's judge scores it. Re-score with ``benchmark.official_judge`` for
 numbers comparable with published results.
@@ -33,11 +33,14 @@ from benchmark.common import NAMESPACE_PREFIX, _loadDotEnv
 from benchmark.config import loadBenchmarkConfig
 from benchmark.judge import LlmJudge
 from kormem.core import usage
+from kormem.core.ranks import RANK_NOTE, rankIndex, rankLabel
 
 logger = logging.getLogger(__name__)
 
 _CONTEXT_CACHE = os.environ.get("KORMEM_CONTEXT_CACHE")
-_RECALL_EFFORT = os.environ.get("KORMEM_RECALL_EFFORT", "medium")
+_RECALL_EFFORT = os.environ.get("KORMEM_RECALL_EFFORT", "high")
+# Show each session's rank and relevance to the answer model, as MCP and `kormem query` do.
+_ANSWER_RANKS = os.environ.get("KORMEM_ANSWER_RANKS", "1").lower() not in ("0", "false", "no")
 
 
 ANSWER_PROMPT = """You are answering a question about the user's own past conversations, using ONLY the context below.
@@ -163,7 +166,13 @@ async def _evalOne(pipeline, item: Dict[str, Any], config, judge: LlmJudge, open
         logger.exception("recall failed qid=%s", qid)
         return {"questionId": qid, "questionType": qType, "score": 0, "error": f"recall: {e!r}"}
 
-    sessionsText = "\n\n---\n\n".join(s["text"] for s in ctx.get("sources", [])) or "(none)"
+    sources = ctx.get("sources", [])
+    if _ANSWER_RANKS and any(s.get("rank") for s in sources):
+        index = rankIndex(sources, lambda s: f"session of {s['date']}")
+        sessionsText = f"{RANK_NOTE}\nBy rank:\n{index}\n\n---\n\n" + "\n\n---\n\n".join(
+            f"[{rankLabel(s)}]\n{s['text']}" for s in sources)
+    else:
+        sessionsText = "\n\n---\n\n".join(s["text"] for s in sources) or "(none)"
     notesText = "\n\n".join(f"### {n['title']} ({n['folder']})\n{n['body']}" for n in ctx.get("notes", [])) or "(none)"
     prompt = ANSWER_PROMPT.format(
         queryDate=item.get("question_date") or "unknown",
@@ -260,6 +269,7 @@ async def main() -> int:
         "byType": byTypeAcc,
         "elapsedSec": time.monotonic() - t0,
         "recallEffort": _RECALL_EFFORT,
+        "answerRanks": _ANSWER_RANKS,
         "models": {
             "answer": config.answerModel,
             "answerReasoning": config.answerReasoningEffort,
