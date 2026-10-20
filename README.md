@@ -10,6 +10,10 @@ Local long-term memory for AI agents. kormem indexes everything you say to assis
 
 If you know [QMD](https://github.com/tobi/qmd), you already know the commands: `collection add`, `context add`, `search`, `vsearch`, `query`, `get`, `multi-get` and `ls` work the same way. kormem adds the memory layer on top: chats, lessons, a linked vault and recall.
 
+https://github.com/user-attachments/assets/4d28d660-c8c2-4271-80d1-092787155ae4
+
+<p align="center"><sub>▶ Also on <a href="https://youtu.be/5kTirMTDepk">YouTube</a> (68 s)</sub></p>
+
 ## Add kormem to your agent
 
 Paste this into Claude Code, Codex, Cursor or any agent that can run commands:
