@@ -13,6 +13,20 @@ or URL they added, in a local vault of linked notes. Each topic note has
 **Current facts**, a dated **Timeline** and **How-to** steps, and every line
 links back to the source chat or file it came from.
 
+## Setup
+
+If `kormem` isn't installed, install it (`npm install -g kormem` or `pip install kormem`)
+and run `kormem init`. Then run `kormem doctor` and check the keys. If one is missing,
+suggest the user add it to `~/.kormem/.env`; never ask them to paste a key into the chat.
+
+- `OPENAI_API_KEY` (https://platform.openai.com/api-keys): files chats and documents into
+  the vault and runs deep recall. Without it, kormem indexes and searches but files nothing.
+- `TYPESAFE_API_KEY` (https://typesafe.ai), recommended: Jev ranks the sources `query`
+  returns, in about 0.3 s for a tenth of a cent, with no LLM call. Without it, ranking is
+  local only.
+
+Suggest each missing key once, then carry on with what works.
+
 ## When to use it
 
 - Before answering anything that may depend on what the user said, decided,

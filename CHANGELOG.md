@@ -4,15 +4,27 @@ All notable changes to kormem are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-17
+
+0.1.2 was tagged on GitHub but never reached PyPI or npm; 0.1.3 includes its changes.
+
 ### Added
 
-- Jev re-ranking in recall. With `TYPESAFE_API_KEY` set, Jev (`jev-1.13.0`) scores the previews of the first pass's top 30 sources in parallel (about 0.2 s, $0.001 a question), and its ranking is fused with the local one. On all 500 LongMemEval questions, every needed session was in the top 5 for 97.8% of questions, up from 95.6%. Short previews of matching sources are sent to TypeSafe; without the key, ranking stays local. `kormem model set decision` picks the Jev model.
+- Jev re-ranking in recall. With `TYPESAFE_API_KEY` set, Jev (`jev-1.13.0`) scores the previews of the first pass's top 30 sources in parallel (about 0.3 s, $0.001 a question), and its ranking is fused with the local one. On all 500 LongMemEval questions, every needed session was in the top 5 for 97.8% of questions, up from 95.6%. Short previews of matching sources are sent to TypeSafe; without the key, ranking stays local. `kormem model set decision` picks the Jev model.
 - Every source `/recall` returns carries `rank` (1 = most relevant), `relevance` (Jev's probability) and `agentChose`. MCP `query`, `kormem query` and the benchmark prompt show them, with a note to start from the top-ranked sources.
+- `kormem doctor` suggests `TYPESAFE_API_KEY` when it is not set.
+- README (and the PyPI page): a copy-paste prompt that installs kormem in Claude Code or any agent and asks the user for `OPENAI_API_KEY` and `TYPESAFE_API_KEY`. The skill has a Setup section that does the same.
+- `docs/research/jev-decisions.md`: the tests behind the Jev design.
 
 ### Changed
 
-- `kormem query` and MCP `query` no longer run the recall agent by default. They return the top 8 sources in about 2 s, dropping ranks 6–8 that Jev scores below 0.3. `--deep` (MCP `deep: true`, API `effort: "high"`) runs the recall agent from a 12-source shortlist; `"medium"` is still accepted and means `"high"`. The benchmark default is `high`.
+- `kormem query` and MCP `query` no longer run the recall agent by default. They return the top 8 sources in a few seconds, dropping ranks 6–8 that Jev scores below 0.3. `--deep` (MCP `deep: true`, API `effort: "high"`) runs the recall agent from a 12-source shortlist; `"medium"` is still accepted and means `"high"`. The benchmark default is `high`.
 - The query rewrite before chunk search (rewrite, HyDE, sub-questions) is off. It added about 5 s per query and did not change recall on LongMemEval. The setting is now `queryRewrite` (default `false`); the old `queryOptimize` key, which 0.1.x wrote into every config, is ignored.
+
+### Fixed
+
+- `kormem doctor` no longer crashes when the engine's health check is slow to answer.
+- The skill's frontmatter is valid YAML, so `npx skills add kushalsinha/kormem` installs it.
 
 ## [0.1.2] - 2026-10-15
 
@@ -71,7 +83,8 @@ First release.
 - Gemini or local (BAAI/bge-base-en-v1.5) embeddings; OpenAI-powered extraction and recall.
 - Distribution as an npm launcher (`kormem`), a Python package (`kormem` on PyPI) and a JS SDK (`createMemoryStore`).
 
-[Unreleased]: https://github.com/kushalsinha/kormem/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/kushalsinha/kormem/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/kushalsinha/kormem/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/kushalsinha/kormem/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/kushalsinha/kormem/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/kushalsinha/kormem/releases/tag/v0.1.0
