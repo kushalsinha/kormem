@@ -211,7 +211,7 @@ async def testRecallWalksVaultAndResolvesDates(env, monkeypatch):
     monkeypatch.setattr(recallMod, "recursiveRecall", fakeAgent)
     pipe = recallMod.RecallPipeline(store=store, config=config)
     monkeypatch.setattr(pipe.reranker, "_load", lambda: (_ for _ in ()).throw(RuntimeError("offline")))
-    ctx = await pipe.recall("Where did I redeem the creamer coupon?", "t", "2023/05/30 (Tue) 20:42")
+    ctx = await pipe.recall("Where did I redeem the creamer coupon?", "t", "2023/05/30 (Tue) 20:42", effort="high")
 
     assert "S1" in seen["briefing"] and "Target" in seen["note"] and "(S1)" in seen["note"]
     assert "yesterday [2023-05-28]" in seen["source"]

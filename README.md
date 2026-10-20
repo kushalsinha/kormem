@@ -6,36 +6,92 @@
 [![npm](https://img.shields.io/npm/v/kormem.svg)](https://www.npmjs.com/package/kormem)
 [![PyPI](https://img.shields.io/pypi/v/kormem.svg)](https://pypi.org/project/kormem/)
 
-Local long-term memory for AI agents. kormem indexes everything you say to assistants and every file, folder or URL you add, then files it into an Obsidian-compatible vault of linked notes. A small recall agent walks that vault to answer questions with dates and sources.
+Local long-term memory for AI agents. kormem indexes everything you say to assistants and every file, folder or URL you add, then files it into an Obsidian-compatible vault of linked notes. When your agent needs something from the past, `kormem query` returns the notes and sources that answer it, ranked by relevance, in a few seconds. For counts, timelines and preferences, `--deep` sends a recall agent through the vault, and it comes back with dated findings.
 
 If you know [QMD](https://github.com/tobi/qmd), you already know the commands: `collection add`, `context add`, `search`, `vsearch`, `query`, `get`, `multi-get` and `ls` work the same way. kormem adds the memory layer on top: chats, lessons, a linked vault and recall.
+
+https://github.com/user-attachments/assets/4d28d660-c8c2-4271-80d1-092787155ae4
+
+<p align="center"><sub>▶ Also on <a href="https://youtu.be/5kTirMTDepk">YouTube</a> (68 s)</sub></p>
+
+## Add kormem to your agent
+
+Paste this into Claude Code, Codex, Cursor or any agent that can run commands:
+
+```text
+Install kormem, long-term memory for this agent.
+
+1. Run `npm install -g kormem` (or `pip install kormem`), then `kormem init`.
+2. Add the kormem skill. Use one installation method:
+   - In Claude Code, `kormem init` installs the kormem plugin. If it says it didn't, run
+     `claude plugin marketplace add kushalsinha/kormem`, then
+     `claude plugin install kormem@kormem`.
+   - In another agent, run `npx skills add kushalsinha/kormem --skill kormem` and select
+     your agent.
+3. Ask me to add two keys to ~/.kormem/.env. Don't ask me to paste keys into the chat.
+   - OPENAI_API_KEY (https://platform.openai.com/api-keys): files my chats and documents
+     into memory and runs deep recall.
+   - TYPESAFE_API_KEY (https://typesafe.ai), recommended: Jev ranks what recall returns
+     in about 0.3 s for a tenth of a cent, with no LLM call.
+   Then run `kormem doctor` to check both are set.
+4. Read the skill:
+   https://github.com/kushalsinha/kormem/blob/main/plugin/skills/kormem/SKILL.md
+   (raw: https://raw.githubusercontent.com/kushalsinha/kormem/main/plugin/skills/kormem/SKILL.md)
+
+Then use kormem to recall what I've said, decided and preferred before.
+```
+
+In Claude Code, the plugin also remembers every session on its own and loads your lessons when the next one starts. Other agents recall through the skill and the `kormem` CLI, and can add the [MCP server](#mcp-server).
 
 ```mermaid
 flowchart LR
   IN["Chats · files · URLs · facts"] --> IDX["Index now<br/>keywords + vectors"]
   IN --> X["Extract when settled<br/>one model call per source"]
   X --> V[("Vault<br/>linked topic notes")]
-  Q["kormem query"] --> A{"Recall agent"}
-  IDX --> A
-  V --> A
-  A --> OUT["Dated findings<br/>+ notes + sources"]
+  Q["kormem query"] --> R["Rank sources<br/>local first pass + Jev"]
+  IDX --> R
+  V --> R
+  R --> OUT["Ranked notes + sources"]
+  R -->|--deep| A{"Recall agent"}
+  A --> OUT2["+ dated findings"]
 ```
+
+## Fast decisions with Jev
+
+Most of what a memory system does is decide: is this source relevant to the question, which ones belong in the answer, which can be left out. Large models are good at these calls but slow and costly to make on every question, so kormem's recall gives them to [Jev](https://typesafe.ai), a decision model from TypeSafe. Jev answers a yes/no question about a small piece of text with a calibrated probability in about a tenth of a second, for $0.042 per million input tokens.
+
+When your agent asks kormem something, a free local pass (embeddings, keyword search and a cross-encoder on your machine) finds the 30 most likely sources. Jev then reads a short preview of each, all in parallel, and judges whether it helps answer the question, even partly: one item of a count, an earlier value, a date, a stated preference. kormem combines Jev's ranking with the local one, keeps the strongest sources and leaves out the weak ones, and tells your agent each source's rank and relevance so it knows where to look first.
+
+The Jev step takes about 0.3 seconds and costs about a tenth of a cent per question, and no LLM is called. The alternative is a recall agent that reads the sources itself: a little more thorough, but around 30 seconds and several model calls per question. kormem keeps that agent for the questions that need it (`--deep`). Without a `TYPESAFE_API_KEY`, kormem ranks with the local pass alone. [How we chose this design](docs/research/jev-decisions.md).
 
 ## Benchmark
 
-LongMemEval-S, all 500 questions, scored by the official GPT-4o judge (`evaluate_qa.py`). Each question gets one answer from a curated context of about 19k tokens.
+[LongMemEval-S](https://arxiv.org/abs/2410.10813), all 500 questions, scored by the official GPT-4o judge (`evaluate_qa.py`) unless marked as Mem0's custom judge. Each question gets one answer from kormem's deep recall (linked vault and recall agent; about 8 full sessions, ~32k tokens of context). All Kormem rows answer from the same cached contexts.
 
 | System | Answer model | Accuracy |
 |---|---|---|
-| Mastra Observational Memory | gpt-5-mini | 94.9% |
+| **Kormem** | **Claude Sonnet 5.5 (Mem0's custom judge)** | **95.6%** |
+| [Mastra Observational Memory](https://mastra.ai/research/observational-memory) | gpt-5-mini | 94.9% |
 | **Kormem** | **Claude Sonnet 5.5** | **94.4%** |
-| **Kormem** | **GPT-6.1 Sol** | **94.0%** |
-| Mem0 platform | GPT-5 (custom judge) | 93.4–94.4% |
-| gbrain | Claude Sonnet 4.6 | 86.6% |
-| Supermemory | Gemini 3 Pro | 85.2% |
-| Zep | GPT-4o | 71.2% |
+| **Kormem** | **GPT-6.1 Sol** | **93.8%** |
+| **Kormem** | **GPT-6 Astra** | **93.6%** |
+| [Mem0 platform](https://github.com/mem0ai/memory-benchmarks) | GPT-5 (custom judge) | 93.4–94.4% |
+| [gbrain](https://github.com/garrytan/gbrain) | Claude Sonnet 4.6 | 86.6% |
+| [Supermemory](https://supermemory.ai/research/longmembench) | Gemini 3 Pro | 85.2% |
+| [Zep](https://arxiv.org/abs/2501.13956) | GPT-4o | 71.2% |
 
-Other systems' numbers are self-reported; see the [full report](docs/benchmarks/longmemeval.md) for setups and caveats. The answer model accounts for much of the spread: on identical context, Kormem ranges from 88.0% (Grok 4.7) to 94.4% (Sonnet 5.5).
+Other systems' numbers are self-reported; see the [full report](docs/benchmarks/longmemeval.md) for setups and caveats. On identical context, Kormem ranges from 93.6% (Astra) to 94.4% (Sonnet 5.5); any of the three answers 481/500. Mem0's figure uses its own, more lenient judge. Re-judging our misses ([details](docs/benchmarks/longmemeval.md#under-mem0s-judge)) with that judge (same prompt, GPT-5) raises Kormem with Sonnet to **95.6%**, Sol and Astra to 94.4%.
+
+MemPalace publishes only retrieval recall (R@5: a gold session in the top 5), not answer accuracy, so it gets its own table. Same 500 questions, session level:
+
+| System | LLM in ranking | R@5 | All gold sessions in top 5 |
+|---|---|---|---|
+| **Kormem** | **yes** | **99.8%** | **95.8%** |
+| [MemPalace](https://github.com/mempalace/mempalace) hybrid v4 + LLM rerank | yes | 99.2% | 89.8% |
+| [MemPalace](https://github.com/mempalace/mempalace) hybrid v4 (held-out 450) | no | 98.4% | 88.7% |
+| [MemPalace](https://github.com/mempalace/mempalace) raw | no | 96.6% | 85.0% |
+
+MemPalace figures are recomputed from its committed per-question results; method in the [full report](docs/benchmarks/longmemeval.md#retrieval-recall).
 
 ## Quick start
 
@@ -66,7 +122,7 @@ kormem context add kormem://docs "Work documentation"
 # Search
 kormem search "project timeline"            # fast keyword search
 kormem vsearch "how to deploy"              # semantic search
-kormem query "what did we decide about X?"  # recall agent over notes and sources (best quality)
+kormem query "what did we decide about X?"  # ranked notes and sources; --deep runs the recall agent
 
 # Open what you found
 kormem get "#abc123"                        # a source by docid (shown in results)
@@ -86,15 +142,33 @@ kormem lessons                              # what you've told assistants about 
 - **Maintenance**: merges, condenses and archives notes once a day.
 - **Claude Code**: if `claude` is installed, the plugin (MCP server, session hooks, recall skill). Skip with `--skip-agents`.
 
-kormem needs one key. `GEMINI_API_KEY` ([get one](https://aistudio.google.com/apikey)) runs everything: embeddings (`gemini-embedding-2`), extraction into the vault and the recall agent (`gemini-3.8-flash`). Without it, kormem still indexes and searches, with local embeddings (`BAAI/bge-base-en-v1.5`), but nothing is filed into the vault and `query` returns ranked notes and sources without agent findings.
-
-Prefer OpenAI for extraction and recall? Set `OPENAI_API_KEY` instead. It is used when it is the only key, or when `KORMEM_EXTRACTION_MODEL` / `KORMEM_RECALL_MODEL` name a `gpt-*` model.
-
-Keys already set in your environment win over the file. Add or remove a key later and the next `kormem` command restarts the engine with the change. `kormem doctor` shows what is set.
-
-Vectors from different models can't be compared, so when the embedding provider changes (say you add `GEMINI_API_KEY` after indexing locally), kormem drops the old vectors and re-embeds everything in the background. Keyword search works throughout; `kormem status` shows how many chunks are still waiting.
-
 The npm package is a small launcher. On first run it installs the matching `kormem` Python package into `~/.kormem/engine`, using [uv](https://docs.astral.sh/uv/) if you have it (it fetches Python for you), otherwise Python 3.11+ with pip. After that, a command starts in about 0.1 s.
+
+### Models and keys
+
+Kormem uses models for four jobs: **extraction** (filing what you add into the vault), **recall** (the agent behind `kormem query --deep`), **decisions** (Jev, which ranks the sources `query` returns) and **embeddings** (semantic search). The answer itself comes from your assistant's own model (Claude Code, Cursor, ...); kormem only finds the context.
+
+| Setup | Keys in `~/.kormem/.env` | Extraction and recall | Embeddings |
+|---|---|---|---|
+| **Recommended** | `OPENAI_API_KEY` | `gpt-6-luna` | `text-embedding-3-small` |
+| Gemini only | `GEMINI_API_KEY` | `gemini-3.8-flash` (works, costs more to run) | `gemini-embedding-2` |
+| No key | none | off: nothing is filed into the vault and `query` returns ranked notes and sources without agent findings | local |
+
+`TYPESAFE_API_KEY` adds [Jev](#fast-decisions-with-jev) (`jev-1.13.0`) to any setup. Jev sees short previews of the sources that match a question, so those previews are sent to TypeSafe; without the key, ranking stays on your machine.
+
+One OpenAI key runs everything else: `gpt-6-luna` for extraction and the recall agent, and `text-embedding-3-small` for embeddings, which retrieves as well as `gemini-embedding-2` at a tenth of the price. To use Gemini embeddings instead, add `GEMINI_API_KEY` and run `kormem model set embedding gemini-embedding-2`. Every embedding option stores 768-d vectors, about 0.8 KB each, and kormem embeds only text.
+
+```sh
+kormem model                               # each job's model, its key, and this guidance
+kormem model set llm gpt-6-luna            # extraction and recall together
+kormem model set recall gemini-3.8-flash   # or one job; "default" undoes it
+kormem model set embedding gemini-embedding-2     # or text-embedding-3-small, local; re-embeds the index (asks first)
+kormem model set decision jev-1.13.0       # the Jev model; "default" undoes it
+```
+
+**Pick the embedding model once.** Vectors from different models can't be compared, so changing it (or adding `OPENAI_API_KEY` after indexing locally) drops every vector and re-embeds everything in the background. `kormem model set embedding` shows how many vectors that is and asks before it starts. Keyword search works throughout; `kormem status` shows how many chunks are still waiting.
+
+Keys already set in your environment win over the file, and `KORMEM_EXTRACTION_MODEL` / `KORMEM_RECALL_MODEL` override `kormem model`. Add or remove a key, or change a model, and the next `kormem` command restarts the engine with the change. `kormem doctor` shows what is set.
 
 ### Claude Code
 
@@ -113,7 +187,7 @@ Or set it up by hand: see [docs/integrations/claude-code.md](docs/integrations/c
 `--json`, `--files` and `--md` are made for agents:
 
 ```sh
-kormem query "what is the user's deploy process?" --md      # findings, notes and sources as markdown context
+kormem query "what is the user's deploy process?" --md      # notes and ranked sources (+ findings with --deep) as markdown
 kormem search "authentication" --json -n 10
 kormem vsearch "error handling" --all --files --min-score 0.4
 kormem get "#abc123" --full
@@ -133,7 +207,7 @@ That goes in `~/.claude/settings.json` for Claude Code, `claude_desktop_config.j
 
 | Tool | What it does |
 |---|---|
-| `query` | Recall: dated findings, the topic notes they came from, and source docids. `deep: true` for counts and timelines. QMD-style `searches` arrays are accepted. |
+| `query` | Recall: ranked sources (rank and relevance) and the topic notes they link to, with docids. `deep: true` runs the recall agent for counts, timelines and preferences and adds dated findings. QMD-style `searches` arrays are accepted. |
 | `search` | Fast keyword or vector search over indexed chunks, no agent. |
 | `get` | A note or source by `#docid`, `kormem://` address, title or path. `"#abc123:120:40"` reads a line range. |
 | `multi_get` | Several notes or sources by glob or comma-separated list. |
@@ -149,7 +223,7 @@ That goes in `~/.claude/settings.json` for Claude Code, `claude_desktop_config.j
 | `qmd collection add <path> --name n --mask m` | `kormem collection add <path> --name n --mask m` | Same. `list`, `remove`, `rename`, `show` too. |
 | `qmd context add qmd://notes "…"` | `kormem context add kormem://notes "…"` | Same, with `kormem://`. Also guides how notes are filed. |
 | `qmd search` / `vsearch` | `kormem search` / `vsearch` | Same flags: `-n`, `-c`, `--all`, `--min-score`, `--full`, `--json`, `--files`, `--csv`, `--md`, `--xml`. |
-| `qmd query` | `kormem query` | Same role (best quality). kormem's runs a recall agent over the vault and returns findings with dates. |
+| `qmd query` | `kormem query` | Same role. kormem's ranks sources with Jev; `--deep` runs a recall agent over the vault and returns findings with dates. |
 | `qmd get`, `multi-get`, `ls` | `kormem get`, `multi-get`, `ls` | Same, including `#docid` and `path:from:count`. |
 | `qmd embed [-f]`, `update`, `status`, `doctor`, `cleanup`, `mcp` | same names | Same. |
 | — | `remember`, `lessons`, `hook`, `chat`, `extract`, `maintain`, `notes` | Memory commands, below. |
@@ -181,8 +255,8 @@ Supported files: Markdown, text, HTML, JSON, XML, PDF, DOCX and common source co
 ```sh
 kormem search "blue-green deploy"          # keywords; plural and tense forms match ("rollback" finds "rollbacks")
 kormem vsearch "how do we roll back"       # meaning
-kormem query "who approves production deploys?"          # recall agent, low effort (fast)
-kormem query "how many times did we change the API key?" --deep
+kormem query "who approves production deploys?"          # ranked notes and sources
+kormem query "how many times did we change the API key?" --deep   # recall agent, dated findings
 kormem query "…" --date 2026-03-01         # answer as of a date
 kormem query "…" --full                    # include note bodies and source text
 
@@ -223,6 +297,7 @@ kormem notes links "Deploy process"        # outbound links and backlinks
 ```sh
 kormem status                  # sources, chunks, queues, collections, embedding provider
 kormem doctor                  # install, keys, engine
+kormem model [set <job> <model>] # models for extraction, recall, decisions and embeddings
 kormem embed [-f]              # embed what's waiting now; -f re-embeds everything
 kormem cleanup [--vacuum]      # compact the index, no model calls
 kormem maintain [--vacuum]     # cleanup + archive, merge and condense notes (runs daily by itself)
@@ -254,12 +329,17 @@ Topic notes keep what the user said apart from what the assistant suggested, and
 
 ### How recall thinks
 
-`kormem query` and the MCP `query` tool run a small agent over the vault. It starts from a free first pass, then reads, follows links and opens sources until the evidence is complete. A simple lookup that one source clearly answers skips the agent.
+Recall has two modes. Both start the same way: a free local pass scores memory lines, topic notes and source chunks, a local cross-encoder scores the candidate sources, and Jev judges the top 30.
+
+- **Default** (`kormem query`, MCP `query`): the best sources, up to 8, in date order, each labelled with its rank and Jev's relevance. Below the top 5, a source stays only if Jev thinks it helps. This is what your agent gets on every question.
+- **Deep** (`--deep`, MCP `deep: true`): a small agent starts from the top 12 and reads, follows links and opens sources until the evidence is complete, then returns dated findings with the sources. It suits counts, timelines and "what do I prefer" questions. A simple lookup that one source clearly answers skips the agent.
 
 ```mermaid
 flowchart TB
   Q["Question + date"] --> FP["Free first pass<br/>memory lines (last 12 months) · topic notes · source chunks<br/>local cross-encoder scores sources"]
-  FP --> AG{"Recall agent<br/>4 rounds (low) · 8 (--deep)"}
+  FP --> JV["Jev judges the top 30 previews<br/>combined with the local ranking"]
+  JV --> DEF["Default: up to 8 sources<br/>with rank + relevance"]
+  JV --> AG{"--deep: recall agent<br/>from the top 12"}
   AG -->|search| T1["search<br/>chunks, notes, memory"]
   AG -->|read| T2["read_note<br/>facts, timeline"]
   AG -->|backtrack| T3["note_links<br/>links + backlinks"]
@@ -326,9 +406,12 @@ On a copy of 60 LongMemEval users, a maintenance pass cut the index from 403 MB 
 |---|---|---|
 | `KORMEM_HOME` | `~/.kormem` | Data directory |
 | `KORMEM_NAMESPACE` | `main` | Memory namespace; or `--namespace` on any command |
-| `GEMINI_API_KEY` | unset | The one key: embeddings (`gemini-embedding-2`, 768-d), extraction and the recall agent |
-| `OPENAI_API_KEY` | unset | Optional: OpenAI for extraction and recall instead of Gemini |
-| `KORMEM_EXTRACTION_MODEL` / `KORMEM_QUERY_MODEL` / `KORMEM_RECALL_MODEL` | `gemini-3.8-flash` | Models for extraction, query rewriting and the recall agent |
+| `OPENAI_API_KEY` | unset | Extraction and the recall agent (`gpt-6-luna`) and embeddings (`text-embedding-3-small`, 768-d); the one key you need |
+| `GEMINI_API_KEY` | unset | Optional. Embeddings (`gemini-embedding-2`), extraction and recall when it is the only key |
+| `TYPESAFE_API_KEY` | unset | Optional. Jev ranks the sources `query` returns; short source previews are sent to TypeSafe |
+| `KORMEM_DECISION_MODEL` | `jev-1.13.0` | Override the Jev model |
+| `KORMEM_EMBEDDING_PROVIDER` | `auto` | `auto` (OpenAI, then Gemini, by which key is set), `openai`, `gemini` or `local`; prefer `kormem model set embedding` |
+| `KORMEM_EXTRACTION_MODEL` / `KORMEM_RECALL_MODEL` | from `kormem model` | Override the extraction or recall model (`KORMEM_QUERY_MODEL` is an older name for recall) |
 | `FIRECRAWL_API_KEY` | unset | Page text for URL ingest |
 | `KORMEM_ENV_FILE` | `~/.kormem/.env` | Where keys and settings are read from |
 | `KORMEM_ENGINE_PORT` / `KORMEM_ENGINE_URL` | `8787` | Where the engine listens |

@@ -12,7 +12,8 @@ from enum import Enum
 from typing import List, Optional
 
 from kormem.core.config import KormemConfig, loadConfig
-from kormem.extract.llm_client import completeLlm, defaultModel
+from kormem.core.models import llmModel
+from kormem.extract.llm_client import completeLlm
 
 _STOP_WORDS = {
     "a", "an", "the", "is", "are", "was", "were", "what", "how", "when", "where",
@@ -74,7 +75,7 @@ class QueryOptimizer:
         )
 
     def _queryModel(self) -> str:
-        return os.environ.get("KORMEM_QUERY_MODEL") or self.config.queryModel or defaultModel(self.config)
+        return llmModel("recall", self.config)[0]
 
     def _isPersonalMemory(self, query: str) -> bool:
         return bool(_PERSONAL_MEMORY_PRONOUNS.search(query))
@@ -305,7 +306,7 @@ Output: ["How to deploy to AWS?"]"""
         complexity = QueryComplexity.COMPLEX if forceComplex else self.classifyQuery(query)
         isPersonal = self._isPersonalMemory(query)
 
-        if not self._hasLlm() or not self.config.queryOptimize:
+        if not self._hasLlm() or not self.config.queryRewrite:
             return QueryOptimizationResult(
                 originalQuery=query,
                 queryVariants=self._expandQuery(query)[: self.maxVariants],

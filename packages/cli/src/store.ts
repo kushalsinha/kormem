@@ -51,7 +51,17 @@ export interface RecallResult {
   relevantMemory: string;
   lessons: string;
   notes: { title: string; folder: string; body: string }[];
-  sources: { sid: string; title: string; kind: string; date: string; text: string }[];
+  /** In date order. rank: 1 = most relevant; relevance: Jev's probability (null without Jev). */
+  sources: {
+    sid: string;
+    title: string;
+    kind: string;
+    date: string;
+    text: string;
+    rank?: number;
+    relevance?: number | null;
+    agentChose?: boolean;
+  }[];
   findings: string[];
   debug: Record<string, unknown>;
 }
@@ -142,8 +152,8 @@ export function createMemoryStore(options: MemoryStoreOptions = {}) {
       });
     },
 
-    /** Notes, sources and findings for a question (recall agent + date resolution). */
-    async recall(query: string, effort: "low" | "medium" = "low", project?: string): Promise<RecallResult> {
+    /** Ranked notes and sources for a question; effort "high" adds the recall agent's dated findings. */
+    async recall(query: string, effort: "low" | "high" = "low", project?: string): Promise<RecallResult> {
       return enginePost<RecallResult>("/recall", { query, namespaceId, effort, project });
     },
 

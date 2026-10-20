@@ -20,7 +20,8 @@ from urllib.parse import urlparse
 import httpx
 
 from kormem import __version__
-from kormem.core.config import apiKeysSet
+from kormem.core.config import apiKeysSet, loadConfig
+from kormem.core.models import snapshot as modelSnapshot
 
 START_TIMEOUT_SECONDS = 90
 _startLock = threading.Lock()
@@ -65,6 +66,11 @@ def _keysChanged(health: dict) -> bool:
     return "keys" in health and set(apiKeysSet()) != set(health["keys"])
 
 
+def _modelsChanged(health: dict) -> bool:
+    """A model was changed (``kormem model set``) since the running engine started."""
+    return "models" in health and modelSnapshot(loadConfig()) != health["models"]
+
+
 def logPath() -> Path:
     return kormemHome() / "logs" / "engine.log"
 
@@ -95,8 +101,8 @@ class Engine:
         if self._ready:
             return
         h = self.health()
-        if h and _isLocal(self.url) and (h.get("version") != __version__ or _keysChanged(h)):
-            self.stop()  # another version, or the API keys changed since it started
+        if h and _isLocal(self.url) and (h.get("version") != __version__ or _keysChanged(h) or _modelsChanged(h)):
+            self.stop()  # another version, or the API keys or models changed since it started
             h = None
         if not h:
             if not _isLocal(self.url):

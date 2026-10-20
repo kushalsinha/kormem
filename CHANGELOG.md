@@ -4,13 +4,49 @@ All notable changes to kormem are recorded here. The format follows [Keep a Chan
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-17
+
+0.1.2 was tagged on GitHub but never reached PyPI or npm; 0.1.3 includes its changes.
+
+### Added
+
+- Jev re-ranking in recall. With `TYPESAFE_API_KEY` set, Jev (`jev-1.13.0`) scores the previews of the first pass's top 30 sources in parallel (about 0.3 s, $0.001 a question), and its ranking is fused with the local one. On all 500 LongMemEval questions, every needed session was in the top 5 for 97.8% of questions, up from 95.6%. Short previews of matching sources are sent to TypeSafe; without the key, ranking stays local. `kormem model set decision` picks the Jev model.
+- Every source `/recall` returns carries `rank` (1 = most relevant), `relevance` (Jev's probability) and `agentChose`. MCP `query`, `kormem query` and the benchmark prompt show them, with a note to start from the top-ranked sources.
+- `kormem doctor` suggests `TYPESAFE_API_KEY` when it is not set.
+- README (and the PyPI page): a copy-paste prompt that installs kormem in Claude Code or any agent and asks the user for `OPENAI_API_KEY` and `TYPESAFE_API_KEY`. The skill has a Setup section that does the same.
+- `docs/research/jev-decisions.md`: the tests behind the Jev design.
+
+### Changed
+
+- `kormem query` and MCP `query` no longer run the recall agent by default. They return the top 8 sources in a few seconds, dropping ranks 6–8 that Jev scores below 0.3. `--deep` (MCP `deep: true`, API `effort: "high"`) runs the recall agent from a 12-source shortlist; `"medium"` is still accepted and means `"high"`. The benchmark default is `high`.
+- The query rewrite before chunk search (rewrite, HyDE, sub-questions) is off. It added about 5 s per query and did not change recall on LongMemEval. The setting is now `queryRewrite` (default `false`); the old `queryOptimize` key, which 0.1.x wrote into every config, is ignored.
+
+### Fixed
+
+- `kormem doctor` no longer crashes when the engine's health check is slow to answer.
+- The skill's frontmatter is valid YAML, so `npx skills add kushalsinha/kormem` installs it.
+
+## [0.1.2] - 2026-10-15
+
 ### Added
 
 - Community and governance files: CONTRIBUTING, Code of Conduct, Security policy, issue and pull request templates, CODEOWNERS and Dependabot configuration.
+- Benchmark: session-level retrieval recall (R@5) with MemPalace for comparison, `benchmark/retrieval_recall.py` to reproduce it, and source links for every compared system.
+- `kormem model`: shows the model behind extraction, recall and embeddings with the recommended setup; `kormem model set` changes one. An embedding change warns, asks for confirmation and re-embeds the index.
+- OpenAI embeddings: `kormem model set embedding text-embedding-3-small` (or `-3-large`), shortened to the index's 768 dimensions.
+- `benchmark/recall_only.py`: retrieval-only LongMemEval check (R@k and gold sessions in the answer context), no answer model or judge.
+- `benchmark/mem0_judge.py`: re-judges saved LongMemEval answers with Mem0's unified judge prompt (loaded from a clone of `mem0ai/memory-benchmarks`) to compare with Mem0's published score.
 
 ### Changed
 
 - `scripts/release.sh` stages the npm release (`npm stage publish`); approve it on npmjs.com to publish.
+- `gpt-6-luna` is the default for extraction and recall whenever `OPENAI_API_KEY` is set; Gemini runs them only when its key is the only one.
+- One key: with `OPENAI_API_KEY` set, embeddings default to `text-embedding-3-small` (`embeddingProvider: auto`); Gemini embeddings are used when its key is the only one or when chosen with `kormem model set embedding`. Configs that already name a provider keep it, so existing indexes are not re-embedded. On 60 LongMemEval questions it matched `gemini-embedding-2` on retrieval (all@5 95.0% for both) at a tenth of the price.
+- The engine re-embeds when the embedding model or dimension changes, not only the provider.
+- Recall ranks sources by reciprocal rank fusion of the cross-encoder with memory-line, chunk-search and note-link signals, instead of the cross-encoder alone.
+- The recall agent also returns sources holding a superseded value and every source behind one item of a count.
+- Benchmark answer prompt: derive a detail from stated facts (durations, differences, rates, a nearby dated event) before answering "I don't know"; treat "not stated" lines in notes and memory as non-evidence.
+- Benchmark results: LongMemEval-S on the current architecture, 94.4% (472/500) with Claude Sonnet 5.5, 93.8% with GPT-6.1 Sol, 93.6% with GPT-6 Astra (95.6% / 94.4% / 94.4% on Mem0's judge); R@5 99.8%, all gold sessions in top 5 95.8%.
 
 ## [0.1.1]
 
@@ -47,6 +83,8 @@ First release.
 - Gemini or local (BAAI/bge-base-en-v1.5) embeddings; OpenAI-powered extraction and recall.
 - Distribution as an npm launcher (`kormem`), a Python package (`kormem` on PyPI) and a JS SDK (`createMemoryStore`).
 
-[Unreleased]: https://github.com/kushalsinha/kormem/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/kushalsinha/kormem/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/kushalsinha/kormem/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/kushalsinha/kormem/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/kushalsinha/kormem/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/kushalsinha/kormem/releases/tag/v0.1.0

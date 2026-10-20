@@ -51,15 +51,31 @@ def test_provider_switch_drops_vectors_once(tmp_path, monkeypatch):
     monkeypatch.setenv("KORMEM_HOME", str(tmp_path))
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     store = _Store()
-    assert switchIfNeeded(store, cfg.loadConfig()) is None  # first start: just records "local"
-    assert cfg.getEmbeddingPinPath().read_text().strip() == "local"
+    local, gemini = "local:BAAI/bge-base-en-v1.5:768", "gemini:gemini-embedding-2:768"
+    assert switchIfNeeded(store, cfg.loadConfig()) is None  # first start: just records the model
+    assert cfg.getEmbeddingPinPath().read_text().strip() == local
     assert switchIfNeeded(store, cfg.loadConfig()) is None and store.resets == 0
 
     monkeypatch.setenv("GEMINI_API_KEY", "k")  # key added: vectors are dropped and re-made
-    assert switchIfNeeded(store, cfg.loadConfig()) == "local"
+    assert switchIfNeeded(store, cfg.loadConfig()) == local
     assert store.resets == 1
-    assert cfg.getEmbeddingPinPath().read_text().strip() == "gemini"
+    assert cfg.getEmbeddingPinPath().read_text().strip() == gemini
     assert switchIfNeeded(store, cfg.loadConfig()) is None and store.resets == 1
+
+
+def test_model_change_and_legacy_pin(tmp_path, monkeypatch):
+    from kormem.embeddings.reembed import switchIfNeeded
+
+    monkeypatch.setenv("KORMEM_HOME", str(tmp_path))
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    store = _Store()
+    cfg.getEmbeddingPinPath().write_text("gemini\n")  # written by 0.1.x: provider only
+    assert switchIfNeeded(store, cfg.loadConfig()) is None and store.resets == 0
+    assert cfg.getEmbeddingPinPath().read_text().strip() == "gemini:gemini-embedding-2:768"
+
+    monkeypatch.setenv("GEMINI_EMBEDDING_DIMENSIONS", "1536")  # same provider, new dimension
+    assert switchIfNeeded(store, cfg.loadConfig()) == "gemini:gemini-embedding-2:768"
+    assert store.resets == 1
 
 
 async def test_reset_then_reembed_restores_every_vector(tmp_path, monkeypatch):

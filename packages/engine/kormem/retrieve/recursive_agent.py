@@ -34,14 +34,14 @@ import httpx
 
 from kormem.core import usage
 from kormem.core.config import KormemConfig, loadConfig
-from kormem.extract.llm_client import defaultModel, geminiThinking
+from kormem.core.models import llmModel
+from kormem.extract.llm_client import geminiThinking
 
 logger = logging.getLogger(__name__)
 
 EFFORT = {
-    # effort: (reasoning effort, tool rounds)
-    "low": ("low", 4),
-    "medium": ("medium", 8),
+    # recall effort: (reasoning effort, tool rounds). The agent runs only at high effort.
+    "high": ("medium", 8),
 }
 
 
@@ -80,7 +80,8 @@ TOOLS = [
         ["source_id"]),
     _fn("finish", "Return the sources the answer needs and the findings. Call exactly once, last.", {
         "sources": {"type": "array", "items": {"type": "string"},
-                    "description": "Every source id holding evidence for the answer."},
+                    "description": ("Every source id holding evidence for the answer, including sources with an "
+                                    "earlier value it superseded and each source behind one item of a count.")},
         "findings": {"type": "array", "items": {"type": "string"}, "description": (
             "One line per relevant fact or instance: what it is, its absolute date, its source id, and a "
             "short quote. Tag [counts], [planned/not done], [suggested by assistant], [superseded by Sx] or "
@@ -96,8 +97,8 @@ The vault is Obsidian-style: topic notes (in PARA folders) summarise knowledge, 
 How to work:
 - Notes first. The briefing shows the best-matching notes' facts and timelines with source ids; their bullets usually list every instance. Read a note's full text or follow its links when you need more.
 - Then confirm in the sources: read_source with a query returns just the matching part. Ask for full=true only when you need a whole conversation (an assistant's complete list, for example).
-- Counting, totals, lists, ordering, "Nth time": find EVERY instance. Use the note's Timeline, backlinks and several search wordings; one missed instance makes the answer wrong.
-- Current / latest / previous value: find where the value was set and every later change; the most recent source wins.
+- Counting, totals, lists, ordering, "Nth time": find EVERY instance. Use the note's Timeline, backlinks and several search wordings; one missed instance makes the answer wrong. Return every source that contributes an instance, even one that holds only part of it.
+- Current / latest / previous value: find where the value was set and every later change; the most recent source wins. Return the sources with the earlier values too, tagged [superseded by Sx], so the answer can see what changed.
 - Time between events, "how long ago", "when": record each event's absolute date. A relative phrase is relative to its own source's date; resolved dates appear in [brackets].
 - Assistant-provided details ("the third item you listed"): open the source and copy the exact item.
 - Preferences / recommendations: find the user's relevant tastes, constraints and past experiences.
@@ -252,7 +253,7 @@ async def recursiveRecall(
     tools: Dict[str, ToolFn],
     validSources: set,
     *,
-    effort: str = "low",
+    effort: str = "high",
     model: Optional[str] = None,
     config: Optional[KormemConfig] = None,
 ) -> RecallResult:
@@ -262,16 +263,16 @@ async def recursiveRecall(
     sources and notes); ``tools`` maps tool names to async implementations.
     """
     config = config or loadConfig()
-    reasoning, maxRounds = EFFORT.get(effort, EFFORT["low"])
-    model = model or os.environ.get("KORMEM_RECALL_MODEL") or config.queryModel or defaultModel(config)
+    reasoning, maxRounds = EFFORT.get(effort, EFFORT["high"])
+    model = model or llmModel("recall", config)[0]
     if "gemini" in model.lower():
-        apiKey = os.environ.get("GEMINI_API_KEY") or config.geminiApiKey or ""
+        keyName, apiKey = "GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY") or config.geminiApiKey or ""
         turns: Any = _GeminiTurns(model, apiKey, question, briefing)
     else:
-        apiKey = os.environ.get("OPENAI_API_KEY") or config.openaiApiKey or ""
+        keyName, apiKey = "OPENAI_API_KEY", os.environ.get("OPENAI_API_KEY") or config.openaiApiKey or ""
         turns = _OpenAiTurns(model, apiKey, question, briefing)
     if not apiKey:
-        raise RuntimeError("the recall agent needs GEMINI_API_KEY (or OPENAI_API_KEY)")
+        raise RuntimeError(f"the recall agent ({model}) needs {keyName}; see `kormem model`")
 
     calls: List[Dict[str, Any]] = []
     notesRead: List[str] = []

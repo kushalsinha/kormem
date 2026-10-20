@@ -9,19 +9,7 @@ import httpx
 
 from kormem.core import usage
 from kormem.core.config import KormemConfig, loadConfig
-
-
-DEFAULT_OPENAI_MODEL = "gpt-6-luna"
-DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
-
-
-def defaultModel(config: KormemConfig) -> str:
-    """Gemini when its key is set (one key runs everything), else OpenAI."""
-    if os.environ.get("GEMINI_API_KEY") or config.geminiApiKey:
-        return DEFAULT_GEMINI_MODEL
-    if os.environ.get("OPENAI_API_KEY") or config.openaiApiKey:
-        return DEFAULT_OPENAI_MODEL
-    return DEFAULT_GEMINI_MODEL
+from kormem.core.models import llmModel
 
 
 def geminiThinking(effort: Optional[str]) -> dict:
@@ -49,12 +37,7 @@ async def completeLlm(
     config = config or loadConfig()
     geminiKey = os.environ.get("GEMINI_API_KEY") or config.geminiApiKey
     openaiKey = os.environ.get("OPENAI_API_KEY") or config.openaiApiKey
-    extractionModel = (
-        model
-        or os.environ.get("KORMEM_EXTRACTION_MODEL")
-        or config.extractionModel
-        or defaultModel(config)
-    )
+    extractionModel = model or llmModel("extraction", config)[0]
 
     if geminiKey and "gemini" in extractionModel.lower():
         return await _completeGemini(

@@ -2,7 +2,7 @@
 
 QMD-compatible: collection, context, embed, update, search, vsearch, query,
 get, multi-get, ls, status, doctor, cleanup, init, mcp.
-Memory: remember, lessons, chat, hook, extract, maintain, notes, ingest.
+Memory: remember, lessons, chat, hook, extract, maintain, notes, ingest, model.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from kormem import __version__
 from kormem.cli import output as out
 from kormem.cli.client import Engine, EngineError, baseUrl, kormemHome, logPath
 from kormem.core.config import API_KEYS, getEnvPath, loadEnvFile, writeEnvTemplate
+from kormem.core.ranks import RANK_NOTE, rankIndex, rankLabel
 
 QUICK_HELP = """\
 Quick start:
@@ -25,10 +26,11 @@ Quick start:
   kormem context add kormem://notes "Personal notes and ideas"
   kormem search "project timeline"                fast keyword search
   kormem vsearch "how to deploy"                  semantic search
-  kormem query "what did we decide about X?"      recall agent: walks notes + sources (best quality)
+  kormem query "what did we decide about X?"      ranked notes + sources; --deep runs the recall agent
   kormem get "#abc123"                             a source by docid, or a note / file by name or path
   kormem remember "I prefer pnpm over npm"        a fact, filed into the vault in the background
   kormem mcp                                      MCP server for Claude Code, Claude Desktop, Cursor
+  kormem model                                    the model behind each job, and the recommended setup
 
 Run `kormem <command> -h` for options.
 """
@@ -101,16 +103,26 @@ def cmdInit(args) -> None:
     emb = e.get("/embeddings/status")
     print(f"engine        running at {baseUrl()}, log {logPath()}")
     print(f"embeddings    {emb['provider']} / {emb['model']}")
-    llm = bool({"GEMINI_API_KEY", "OPENAI_API_KEY"} & set(keys))
-    print(f"extraction    {'on' if llm else 'waiting for GEMINI_API_KEY'} "
-          "(files chats, notes and facts into the vault in the background)")
-    print(f"recall agent  {'on' if llm else 'waiting for GEMINI_API_KEY'}")
+    from kormem.core import models
+    from kormem.core.config import loadConfig
+    config = loadConfig()
+    for role, label, what in (("extraction", "extraction", " (files chats, notes and facts into the vault "
+                                                            "in the background)"),
+                              ("recall", "recall agent", "")):
+        model = models.llmModel(role, config)[0]
+        key = models.providerKey(models.llmProvider(model) or "openai")
+        print(f"{label:13} {model if os.environ.get(key) else f'waiting for {key}'}{what}")
+    decision = models.decisionModel(config)[0]
+    print(f"{'decisions':13} " + (f"{decision} (re-ranks and trims the sources recall returns)"
+                                   if models.decisionKey(config) else
+                                   "local ranking (add TYPESAFE_API_KEY for Jev: sharper context, ~$0.001 a query)"))
     hours = float(os.environ.get("KORMEM_MAINTAIN_HOURS", "24"))
     print(f"maintenance   {f'on (merges, condenses and archives notes every {hours:g} h)' if hours > 0 else 'only on request'}")
     if not args.skip_agents:
         print(f"claude code   {_claudeCode()}")
     if not keys:
-        print(f"\nAdd GEMINI_API_KEY to {envPath}; the next kormem command restarts the engine with it.")
+        print(f"\nAdd OPENAI_API_KEY (extraction, recall and embeddings) to {envPath};\n"
+              "the next kormem command restarts the engine with them. `kormem model` explains the setup.")
     print("\nNext: kormem collection add <folder> --name <name>, then kormem query \"...\"")
 
 
@@ -241,7 +253,7 @@ def cmdSearch(args) -> None:
 def cmdQuery(args) -> None:
     fmt = _fmt(args)
     r = _engine(args).post("/recall", {"query": args.query, "namespaceId": args.namespace,
-                                        "effort": "medium" if args.deep else "low", "queryDate": args.date})
+                                        "effort": "high" if args.deep else "low", "queryDate": args.date})
     if fmt == "json":
         return out.printJson(r)
     if fmt == "files":
@@ -256,8 +268,13 @@ def cmdQuery(args) -> None:
             parts.append("## Findings\n\n" + "\n".join(f"- {f}" for f in r["findings"]))
         for n in r["notes"]:
             parts.append(f"## Note: {n['title']} ({n['folder']})\n\n{n['body']}")
+        index = rankIndex(r["sources"], lambda s: s.get("docid") or s["title"])
+        if index:
+            parts.append(f"## Sources by rank\n\n{RANK_NOTE}\n\n{index}")
         for s in r["sources"]:
-            parts.append(f"## Source {s.get('docid', '')} · {s['date'][:10]} · {s['title']}\n\n{s['text']}")
+            label = rankLabel(s)
+            parts.append(f"## Source {s.get('docid', '')} · {s['date'][:10]} · {s['title']}"
+                         f"{' · ' + label if label else ''}\n\n{s['text']}")
         if r.get("relevantMemory"):
             parts.append("## Memory\n\n" + r["relevantMemory"])
         print("\n\n".join(parts) or "No matching memory found.")
@@ -279,12 +296,14 @@ def cmdQuery(args) -> None:
         print(out.bold("\nSources"))
         for s in r["sources"]:
             where = s.get("uri") or ""
-            print(f"  {s.get('docid', ''):8} {s['date'][:10]}  {s['kind']:8} {s['title']}  {out.dim(where)}")
+            label = rankLabel(s)
+            print(f"  {s.get('docid', ''):8} {s['date'][:10]}  {s['kind']:8} {s['title']}  "
+                  f"{out.dim(label + '  ' if label else '')}{out.dim(where)}")
             if s.get("context"):
                 print(out.dim(f"           Context: {s['context']}"))
             if args.full:
                 print("    " + s["text"].replace("\n", "\n    "))
-            elif not r["findings"]:  # the agent was skipped: one source answers a simple lookup
+            elif not r["findings"]:  # no agent ran (default effort, or a simple lookup)
                 text = " ".join(s["text"].split())
                 print(f"           {text[:400]}{'…' if len(text) > 400 else ''}")
     print(out.dim("\nOpen any of these: kormem get <docid | note title>"))
@@ -462,16 +481,19 @@ def cmdDoctor(args) -> None:
     print(f"key file      {getEnvPath()}{'' if getEnvPath().exists() else ' (missing: run kormem init)'}")
     for key in API_KEYS:
         print(f"{key:13} {'set' if os.environ.get(key) else 'not set'}")
-    if not os.environ.get("GEMINI_API_KEY"):
-        print("              embeddings fall back to a local model (BAAI/bge-base-en-v1.5)")
     if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("OPENAI_API_KEY")):
-        print("              extraction and the recall agent need GEMINI_API_KEY; "
+        print("              embeddings run locally (BAAI/bge-base-en-v1.5)")
+    if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("OPENAI_API_KEY")):
+        print("              extraction and the recall agent need OPENAI_API_KEY; "
               "query returns its first pass without it")
+    if not os.environ.get("TYPESAFE_API_KEY"):
+        print("              recall ranks locally; TYPESAFE_API_KEY adds Jev ranking (recommended)")
+    print("models        see `kormem model`")
     e = _engine(args)
     try:
         e.ensure()
         emb = e.get("/embeddings/status")
-        print(f"engine        {ok(True)} ({e.health().get('version')})")
+        print(f"engine        {ok(True)} ({(e.health() or {}).get('version', 'version unknown')})")
         print(f"embeddings    {emb['provider']} / {emb['model']} / {emb['dimension']}-d")
         if emb.get("storedDims"):
             print(f"index dims    {', '.join(map(str, emb['storedDims']))}")
@@ -481,6 +503,191 @@ def cmdDoctor(args) -> None:
     except EngineError as err:
         print(f"engine        not running: {err}")
         print(f"              log: {logPath()}")
+
+
+MODEL_GUIDE = """\
+Answers come from your assistant's own model (Claude Code, Cursor, ...); kormem finds the context.
+
+Recommended setup:
+  OPENAI_API_KEY  the one key you need: gpt-6-luna for extraction and recall, and
+                  text-embedding-3-small for embeddings (768-d, $0.02 per million tokens).
+  GEMINI_API_KEY  optional: gemini-embedding-2 ($0.20 per million tokens) when it is the only key,
+                  or with `kormem model set embedding gemini-embedding-2`.
+  TYPESAFE_API_KEY  optional: Jev re-ranks and trims the sources `kormem query` returns (~0.2 s,
+                  ~$0.001 a query). Short previews of matching sources are sent to TypeSafe.
+  No key: embeddings run locally (free and private; the first index is slower).
+  Pick the embedding model once. Changing it re-embeds everything you have indexed.
+
+Change: kormem model set llm|extraction|recall <model>   (gpt-* or gemini-*, or "default")
+        kormem model set decision <model>                (jev-*, or "default")
+        kormem model set embedding <model>               (gemini-embedding-2, text-embedding-3-small,
+                                                          local or default; re-embeds the whole index)"""
+
+
+def _vectorCount() -> int:
+    """Vectors a re-embed would rebuild (memory-line vectors are recomputed on use)."""
+    import sqlite3
+    from kormem.core.config import getIndexPath
+    path = getIndexPath()
+    if not path.exists():
+        return 0
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            return conn.execute("SELECT COUNT(*) FROM segments WHERE embedding IS NOT NULL "
+                                "AND kind != 'memory'").fetchone()[0]
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return 0
+
+
+def _showModels(args) -> None:
+    from kormem.core import models
+    from kormem.core.config import loadConfig
+    config = loadConfig()
+    rows = []
+    for role in models.LLM_ROLES:
+        model, source = models.llmModel(role, config)
+        provider = models.llmProvider(model)
+        key = models.providerKey(provider) if provider else None
+        rows.append({"role": role, "model": model, "source": source, "key": key,
+                     "keySet": bool(key and os.environ.get(key))})
+    decision, source = models.decisionModel(config)
+    rows.append({"role": "decision", "model": decision, "source": source, "key": "TYPESAFE_API_KEY",
+                 "keySet": bool(models.decisionKey(config))})
+    emb = models.embeddingModel(config)
+    rows.append({"role": "embedding", "model": emb, "dimension": config.embeddingDim,
+                 "key": None if emb.startswith(("local", "hash")) else
+                 "GEMINI_API_KEY" if emb.startswith("gemini") else "OPENAI_API_KEY",
+                 "keySet": not emb.startswith(("local", "hash")), "vectors": _vectorCount()})
+    if args.json:
+        return out.printJson(rows)
+    for r in rows:
+        if r["role"] == "embedding":
+            note = f"{r['dimension']}-d, {r['vectors']:,} vectors"
+        else:
+            missing = "not set: local ranking" if r["role"] == "decision" else "MISSING"
+            keyNote = f"{r['key']} {'set' if r['keySet'] else missing}" if r["key"] else "unknown provider"
+            note = f"{r['source']}, {keyNote}"
+        print(f"{r['role']:11} {r['model']:28} {out.dim(note)}")
+    wanted = (config.embeddingProvider or "auto").lower()
+    if wanted == "auto" and not (os.environ.get("OPENAI_API_KEY") or os.environ.get("GEMINI_API_KEY")):
+        print(out.dim("            (no OPENAI_API_KEY: embeddings run locally)"))
+    elif wanted in models.EMBED_KEYS and not os.environ.get(models.EMBED_KEYS[wanted]):
+        print(out.dim(f"            (no {models.EMBED_KEYS[wanted]}: embeddings run locally)"))
+    llms = {r["model"] for r in rows[:2]}
+    if os.environ.get("OPENAI_API_KEY") and any(m.startswith("gemini") for m in llms):
+        print(f"\nTip: {models.DEFAULT_OPENAI_MODEL} costs much less than Gemini for extraction and recall: "
+              f"kormem model set llm {models.DEFAULT_OPENAI_MODEL}")
+    print("\n" + MODEL_GUIDE)
+
+
+def _setLlm(roles, value: str, raw: dict) -> None:
+    from kormem.core import models
+    fields = {"extraction": "extractionModel", "recall": "queryModel"}
+    if value != "default":
+        provider = models.llmProvider(value)
+        if not provider:
+            raise EngineError(f"Unknown model {value!r}: use a gpt-* (OpenAI) or gemini-* (Gemini) model, "
+                              "or 'default'.")
+        key = models.providerKey(provider)
+        if not os.environ.get(key):
+            print(f"warning: {value} needs {key}; add it to {getEnvPath()}.", file=sys.stderr)
+    for role in roles:
+        if value == "default":
+            raw.pop(fields[role], None)
+        else:
+            raw[fields[role]] = value
+        for var in models.LLM_SETTINGS[role][1]:
+            if os.environ.get(var):
+                print(f"warning: {var}={os.environ[var]} is set in the environment and overrides this.",
+                      file=sys.stderr)
+        print(f"{role:11} {value}")
+
+
+def _setDecision(value: str, raw: dict) -> None:
+    from kormem.core import models
+    if value == "default":
+        raw.pop("decisionModel", None)
+    elif value.lower().startswith("jev"):
+        raw["decisionModel"] = value
+    else:
+        raise EngineError(f"Unknown decision model {value!r}: use a jev-* model (e.g. jev-1.13.0) or 'default'.")
+    if not os.environ.get("TYPESAFE_API_KEY"):
+        print(f"warning: Jev needs TYPESAFE_API_KEY; add it to {getEnvPath()}.", file=sys.stderr)
+    if os.environ.get(models.DECISION_ENV):
+        print(f"warning: {models.DECISION_ENV}={os.environ[models.DECISION_ENV]} is set in the environment "
+              "and overrides this.", file=sys.stderr)
+    print(f"{'decision':11} {value}")
+
+
+def _setEmbedding(value: str, raw: dict, yes: bool) -> bool:
+    """Write the embedding choice after a warning and a confirmation. False when nothing changed."""
+    from kormem.core import models
+    from kormem.core.config import KormemConfig
+    new = dict(raw)
+    for k in ("embeddingProvider", "embeddingModel", "localEmbedModel"):
+        new.pop(k, None)
+    if value.startswith(("gemini", "text-embedding")):
+        provider = "gemini" if value.startswith("gemini") else "openai"
+        key = models.EMBED_KEYS[provider]
+        if not os.environ.get(key):
+            raise EngineError(f"{value} needs {key}: add it to {getEnvPath()} first.")
+        new.update(embeddingProvider=provider, embeddingModel=value)
+    elif value == "local" or value.startswith("local:"):
+        new["embeddingProvider"] = "local"
+        if value.startswith("local:"):
+            new["localEmbedModel"] = value.split(":", 1)[1]
+    elif value != "default":
+        raise EngineError(f"Unknown embedding model {value!r}: use gemini-embedding-2, text-embedding-3-small, "
+                          "local, local:<huggingface model> or default.")
+    current = models.embeddingIdentity(KormemConfig.fromDict(raw))
+    target = models.embeddingIdentity(KormemConfig.fromDict(new))
+    if current == target:
+        print(f"embedding   {models.embeddingModel(KormemConfig.fromDict(new))} is already in use.")
+        return False
+    n = _vectorCount()
+    tokens = n * models.TOKENS_PER_CHUNK
+    newModel = models.embeddingModel(KormemConfig.fromDict(new))
+    price = models.EMBED_PRICE_PER_M.get(newModel)
+    cost = (", free (on this machine)" if newModel.startswith("local") else
+            f", about ${tokens / 1e6 * price:.2f} at list price" if price is not None else "")
+    print(f"Changing the embedding model re-embeds everything: {n:,} vectors, ~{tokens:,} tokens{cost}.\n"
+          "Keyword search keeps working; semantic search covers more of the index as the re-embed\n"
+          "runs in the background. Vectors from different models can't be mixed, so change this rarely.",
+          file=sys.stderr)
+    if not yes:
+        if not sys.stdin.isatty():
+            raise EngineError("Re-run with --yes to confirm the embedding change.")
+        if input(f"Switch embeddings to {value}? [y/N] ").strip().lower() not in ("y", "yes"):
+            print("Unchanged.")
+            return False
+    raw.clear()
+    raw.update(new)
+    print(f"embedding   {models.embeddingModel(KormemConfig.fromDict(new))}")
+    return True
+
+
+def cmdModel(args) -> None:
+    """Show or change the model behind each job: extraction, recall, decisions and embeddings."""
+    from kormem.core.config import readRawConfig, writeRawConfig
+    if args.sub in (None, "show"):
+        return _showModels(args)
+    raw = readRawConfig()
+    role, value = args.role, args.model
+    if role == "embedding":
+        if not _setEmbedding(value, raw, args.yes):
+            return
+    elif role == "decision":
+        _setDecision(value, raw)
+    else:
+        _setLlm(("extraction", "recall") if role == "llm" else (role,), value, raw)
+    writeRawConfig(raw)
+    e = _engine(args)
+    if e.health():
+        e.ensure()  # restarts the engine on the new models; an embedding change re-embeds from there
+        print("Engine restarted with the new models.")
 
 
 def cmdStop(args) -> None:
@@ -575,10 +782,11 @@ def _parser() -> argparse.ArgumentParser:
         s.add_argument("--full", action="store_true", help="show whole sources")
         s.add_argument("--no-rerank", action="store_true")
 
-    s = add("query", cmdQuery, "recall: the agent walks notes, links and sources (best quality)",
+    s = add("query", cmdQuery, "recall: ranked notes and sources; --deep runs the recall agent",
             parents=(common, fmt), aliases=("deep-search", "recall"))
     s.add_argument("query")
-    s.add_argument("--deep", action="store_true", help="more agent rounds, for counts and timelines")
+    s.add_argument("--deep", action="store_true",
+                   help="run the recall agent (~30 s): counts, timelines, preferences, dated findings")
     s.add_argument("--full", action="store_true", help="show note bodies and source text")
     s.add_argument("--date", help="answer as of this date (YYYY-MM-DD)")
 
@@ -647,6 +855,15 @@ def _parser() -> argparse.ArgumentParser:
 
     add("status", cmdStatus, "index, queue, collections and embedding provider")
     add("doctor", cmdDoctor, "check the install, keys and engine")
+    m = add("model", cmdModel, "show or change the models for extraction, recall, decisions and embeddings")
+    ms = m.add_subparsers(dest="sub")
+    ms.add_parser("show", parents=[common], help="each job's model, its key and the recommended setup")
+    a = ms.add_parser("set", parents=[common], help="model set llm|extraction|recall|decision|embedding <model>")
+    a.add_argument("role", choices=("llm", "extraction", "recall", "decision", "embedding"),
+                   help="llm sets extraction and recall together")
+    a.add_argument("model", help='e.g. gpt-6-luna, gemini-3.8-flash, jev-1.13.0, gemini-embedding-2, local, '
+                                 'or "default"')
+    a.add_argument("--yes", action="store_true", help="confirm an embedding change without asking")
     add("mcp", cmdMcp, "MCP server on stdio")
     add("stop", cmdStop, "stop the background engine")
     s = add("serve", cmdServe, "run the engine in the foreground")
